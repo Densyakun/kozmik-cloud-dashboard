@@ -2,10 +2,10 @@
 applyTo: '**'
 ---
 
-# Cloud Deck - プロジェクトメモ
+# Kozmik Cloud Dashboard - プロジェクトメモ
 
 ## Goal
-- GitHub CodespacesとOna Cloudの開発環境をスマホから管理するWebアプリ（cloud-deck）。opencodeをワークスペースで起動・公開できる。
+- GitHub CodespacesとOna Cloudの開発環境をスマホから管理するWebアプリ（kozmik-cloud-dashboard）。opencodeをワークスペースで起動・公開できる。
 
 ## Constraints & Preferences
 - スマホ（同じLAN・`http://<PCのIP>:3000`）から操作可能
@@ -58,12 +58,16 @@ applyTo: '**'
 ## Key Decisions
 - npmを使わずopencodeバイナリをGitHub ReleasesからローカルDLしSSH stdinで転送（CodespaceのNVSがnpmを壊すため）
 - `/oc/<env>`サブパスではなく専用ポートのルート配信（SPAアセット・WebSocketが正しく動くため）
-- トンネルはループバックに張り、Cloud Deckのnode.exeが0.0.0.0にバインド（ファイアウォール内包）
+- トンネルはループバックに張り、Kozmik Cloud Dashboardのnode.exeが0.0.0.0にバインド（ファイアウォール内包）
 - SSHコマンドは複数引数（`mkdir`/`cat`等）でリトライ付き
 
 ## Relevant Files
-- `cloud-deck/server.js`: 全サーバーロジック（GitHub/Ona API、opencode起動、プロキシ、トンネル）
-- `cloud-deck/public/app.js`: カードUI、状態ポーリング(5s)、ボタン操作
-- `cloud-deck/public/index.html` / `public/style.css`: UI
-- `cloud-deck/.env.local.example`: 環境変数テンプレート（`.env.local`/`.opencode-cache/`はgitignore対象）
-- `cloud-deck/.opencode-cache/`: opencodeバイナリ用ローカルキャッシュ
+- `kozmik-cloud-dashboard/server.js`: 全サーバーロジック（GitHub/Ona API、opencode起動、プロキシ、トンネル）
+
+- `kozmik-cloud-dashboard/public/app.js`: カードUI、状態ポーリング(5s)、ボタン操作
+
+- `kozmik-cloud-dashboard/public/index.html` / `public/style.css`: UI
+
+- `kozmik-cloud-dashboard/.env.local.example`: 環境変数テンプレート（`.env.local`/`.opencode-cache/`はgitignore対象）
+
+- `kozmik-cloud-dashboard/.opencode-cache/`: opencodeバイナリ用ローカルキャッシュ

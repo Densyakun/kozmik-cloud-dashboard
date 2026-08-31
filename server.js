@@ -612,4 +612,4 @@ const server = http.createServer(async (request, response) => {
   createReadStream(filePath).pipe(response);
 });
 
-server.listen(serverPort, () => console.log(`Cloud Deck running at http://localhost:${serverPort}`));
+server.listen(serverPort, () => console.log(`Kozmik Cloud Dashboard running at http://localhost:${serverPort}`));

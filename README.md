@@ -1,4 +1,4 @@
-# Cloud Deck
+# Kozmik Cloud Dashboard
 
 GitHub Codespaces と Ona Cloud の開発環境をスマホから管理するためのWebアプリです。モックは表示せず、設定済みプロバイダーの実データだけを表示します。
 
@@ -43,7 +43,7 @@ Personal access tokenはサーバー側でのみ読み込み、ブラウザへ�
 
 ### OpenCodeの公開について
 
-Cloud Deckは環境ごとに**固定の専用公開ポート**を開設し、`http://<サーバーのLAN IP>:<専用ポート>/`としてopencodeをルート配信します（SPA・WebSocketもそのまま動作し、パスワード認証でログインできます）。トンネルはループバックに張り、Cloud Deckプロセスが0.0.0.0にバインドするため、同じネットワークのスマホから開けます。
+Kozmik Cloud Dashboardは環境ごとに**固定の専用公開ポート**を開設し、`http://<サーバーのLAN IP>:<専用ポート>/`としてopencodeをルート配信します（SPA・WebSocketもそのまま動作し、パスワード認証でログインできます）。トンネルはループバックに張り、Kozmik Cloud Dashboardプロセスが0.0.0.0にバインドするため、同じネットワークのスマホから開けます。
 
 - 専用ポートは環境IDから固定で決まるため、**URLは起動のたびに変わりません**
 - 認証はBasic認証で、ユーザー名`OPENCODE_SERVER_USERNAME`（既定`opencode`）とパスワード`OPENCODE_SERVER_PASSWORD`（未設定なら毎回ランダム生成）を使用します
@@ -60,7 +60,7 @@ Ona製品のAPIドメインは組織ごとに異なる場合があります（�
 
 ### Vercelへのデプロイについて
 
-**現行の自己ホスト方式（Cloud DeckプロセスがSSHトンネル・プロキシ・バイナリ転送を常駐させて公開ポートを配信する運転形態）はVercelでは動作しません。**
+**現行の自己ホスト方式（Kozmik Cloud DashboardプロセスがSSHトンネル・プロキシ・バイナリ転送を常駐させて公開ポートを配信する運転形態）はVercelでは動作しません。**
 
 - **技術的な理由**: Vercel Functionsはステートレスなサーバーレス実行環境（microVM・Read-only FS・`/tmp`上限・Hobby最大300s/Pro最大800s）で、長時間動作するHTTPサーバー・SSHトンネル・固定公開ポートの`0.0.0.0`バインド・永続キャッシュを保持できません。
 - **ポリシー上の理由**: VercelのAcceptable Use Policyは長期の接続を中継するプロキシ／トンネル用途（"proxy", "act as a VPN", "undue burden"）やHobbyプランの商用利用を禁止しており、本アプリの現行運転形態（リモート開発環境へのトンネル・プロキシ配信）は許容されません。
@@ -89,7 +89,7 @@ winget install --id GitHub.cli -e --scope user
 
 ## 注意点
 
-- Codespacesの「公開ポートURL（`https://<codespace>-<port>.app.github.dev`）」は、ヘッドレス（API/CLIで作成しエディタ未接続）のCodespaceでは転送エージェント未初期化のため表示できない場合があります。現行のCloud Deckはそれを避けるため、SSHトンネル経由のURL（LAN内）を表示します。Vercel化する場合、このヘッドレス条件でポートが公開されるかを先に小さいdevcontainerで検証してください。
+- Codespacesの「公開ポートURL（`https://<codespace>-<port>.app.github.dev`）」は、ヘッドレス（API/CLIで作成しエディタ未接続）のCodespaceでは転送エージェント未初期化のため表示できない場合があります。現行のKozmik Cloud Dashboardはそれを避けるため、SSHトンネル経由のURL（LAN内）を表示します。Vercel化する場合、このヘッドレス条件でポートが公開されるかを先に小さいdevcontainerで検証してください。
 - OpenCode serveのパスワード（`OPENCODE_SERVER_PASSWORD`）は未設定なら毎回ランダム生成され、レスポンスに含めます。
 - 認証情報（GITHUB/PAT）はサーバー側でのみ保持し、ブラウザには返しません。
 
