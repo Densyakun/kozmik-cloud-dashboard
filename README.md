@@ -2,6 +2,8 @@
 
 GitHub Codespaces と Ona Cloud の開発環境をスマホから管理するためのWebアプリです。モックは表示せず、設定済みプロバイダーの実データだけを表示します。
 
+> **Codespaces側の操作不要** — ダッシュボードの「OpenCode起動」ボタンだけで、停止中Codespaceの自動起動・opencodeバイナリの転送・`opencode serve`の起動・トンネル確立までを全自動で行います。Codespace内でターミナルを開いたりコマンドを打つ必要はありません。
+
 ## 使い方
 
 1. `.env.local` を作成
@@ -43,12 +45,14 @@ Personal access tokenはサーバー側でのみ読み込み、ブラウザへ�
 
 ### OpenCodeの公開について
 
+**Codespaces上で手動操作は不要です。** ダッシュボードからワンクリックで `opencode serve` が起動し、Codespace内でのコマンド入力やVS Code操作は必要ありません。
+
 Kozmik Cloud Dashboardは環境ごとに**固定の専用公開ポート**を開設し、`http://<サーバーのLAN IP>:<専用ポート>/`としてopencodeをルート配信します（SPA・WebSocketもそのまま動作し、パスワード認証でログインできます）。トンネルはループバックに張り、Kozmik Cloud Dashboardプロセスが0.0.0.0にバインドするため、同じネットワークのスマホから開けます。
 
 - 専用ポートは環境IDから固定で決まるため、**URLは起動のたびに変わりません**
 - 認証はBasic認証で、ユーザー名`OPENCODE_SERVER_USERNAME`（既定`opencode`）とパスワード`OPENCODE_SERVER_PASSWORD`（未設定なら毎回ランダム生成）を使用します
 - URLとパスワードはカード上でそれぞれ**個別にコピー**できます（未起動時は「未起動」と表示せず、稼働中の状態だけを表示します）
-- 停止中Codespaceは自動で起動した上でOpenCodeを起動します。環境削除には確認ダイアログが必要です
+- 停止中Codespaceは自動で起動した上でOpenCodeを起動します（Codespace側での操作不要）。環境削除には確認ダイアログが必要です
 
 ### Ona Cloudの環境作成について
 
@@ -60,7 +64,19 @@ Ona製品のAPIドメインは組織ごとに異なる場合があります（�
 
 ### Vercelへのデプロイについて
 
-**現行の自己ホスト方式（Kozmik Cloud DashboardプロセスがSSHトンネル・プロキシ・バイナリ転送を常駐させて公開ポートを配信する運転形態）はVercelでは動作しません。**
+**本リポジトリはVercelデプロイに対応しています（薄い制御面アーキテクチャ）。**
+
+```powershell
+vercel --prod
+# Vercelダッシュボードで以下を設定: GITHUB_CODESPACES_TOKEN, ONA_PERSONAL_ACCESS_TOKEN, OPENCODE_API_KEY
+```
+
+- `api/` 配下がVercel Functionsとしてデプロイされ、`public/` が静的配信されます。`vercel.json` で `maxDuration: 10` に設定済みです。
+- **Vercel上ではCodespacesの一覧・作成・起動・停止・削除（GitHub/Ona APIの薄い制御面）のみ利用可能**です。`POST /api/opencode/serve` は `501 not_available_on_vercel` を返します（SSHトンネル/プロキシはステートレスなFunctionsで保持できないため）。
+- フル機能（スマホからワンクリックで `opencode serve` 起動・固定URL発行）は引き続きローカルの `node server.js` で利用できます。
+
+<details>
+<summary>なぜ従来の自己ホスト方式はVercelで動作しないか</summary>
 
 - **技術的な理由**: Vercel Functionsはステートレスなサーバーレス実行環境（microVM・Read-only FS・`/tmp`上限・Hobby最大300s/Pro最大800s）で、長時間動作するHTTPサーバー・SSHトンネル・固定公開ポートの`0.0.0.0`バインド・永続キャッシュを保持できません。
 - **ポリシー上の理由**: VercelのAcceptable Use Policyは長期の接続を中継するプロキシ／トンネル用途（"proxy", "act as a VPN", "undue burden"）やHobbyプランの商用利用を禁止しており、本アプリの現行運転形態（リモート開発環境へのトンネル・プロキシ配信）は許容されません。
@@ -73,6 +89,8 @@ Ona製品のAPIドメインは組織ごとに異なる場合があります（�
 4. **成果物をVercelから直接 exec する場合**: どうしてもVercel関数からSSHでCodespaceへコマンドを投げるなら、`gh`/`ssh`を**Large functions（上限5GB・`includeFiles`）に同梱**し、Vercelの自由なアウトバウンド（port 22も可）を使って起動だけ投げ、即返す形なら技術的には可能です（ただし同梱分のデプロイサイズ増と要検証）。
 
 未検証の注意点として、**ヘッドレス（API/CLIで作成しエディタ未接続）のCodespaceでは`*.app.github.dev`のポート転送エージェントが未初期化で、ポートが公開されない可能性があります。** その場合は（a）`.devcontainer`で`forwardPorts`を宣言して公開する、または（b）Codespace内で逆トンネルを張る、のどちらかで回避します。実際にデプロイする前に、小さいdevcontainerでこの動作確認を行うのが安全です。
+
+</details>
 
 現行のローカル実行方式は引き続き`node server.js`で利用できます。公開時はTLS・アクセス制御を追加してください。
 

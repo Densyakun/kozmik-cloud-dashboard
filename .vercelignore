@@ -1,0 +1,7 @@
+.opencode-cache
+.vercel
+.git
+.gitignore
+.env.local
+node_modules
+.opencode-cache/**
