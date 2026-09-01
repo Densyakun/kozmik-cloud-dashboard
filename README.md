@@ -18,6 +18,7 @@ Copy-Item .env.local.example .env.local
 GITHUB_CODESPACES_TOKEN=github_pat_...
 ONA_PERSONAL_ACCESS_TOKEN=...
 OPENCODE_API_KEY=...
+DASHBOARD_PASSWORD=your-secret-password
 ```
 
 3. 起動
@@ -31,7 +32,11 @@ npm start
    - 設定済みなら `GET /api/environments` の実データが一覧に表示されます
    - 各Codespaceの「OpenCode起動」で、そのCodespace内に `opencode serve` を起動して**専用の固定URL・ユーザー名・パスワード**を取得します（要 `gh` CLI）
 
-スマホの場合は、PCと同じWi-Fiで `http://<PCのIP>:3000` を開いてください。
+スマホの場合は、PCと同じWi-Fiで `http://<PCのIP>:3000` を開いてください。`DASHBOARD_PASSWORD` を設定している場合は `/login.html` でパスワードログインが必要です。
+
+## 認証について
+
+`DASHBOARD_PASSWORD` を設定すると、すべてのページ・APIがパスワード保護されます。`/login.html` でログインすると `kcd_auth` Cookie（HttpOnly, 30日）が発行され、未認証のAPIは `401 unauthorized` を返し、ページは `/login.html` にリダイレクトされます。Vercelでは環境変数 `DASHBOARD_PASSWORD` で同様に保護されます。
 
 ## API接続について
 

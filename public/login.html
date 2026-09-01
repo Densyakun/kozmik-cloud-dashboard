@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Login - Kozmik Cloud Dashboard</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<div class="app-shell" style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px">
+  <form id="loginForm" style="background:#fff;border:1px solid #e4e7ea;border-radius:12px;padding:28px;max-width:380px;width:100%">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px"><span class="brand-mark" style="display:inline-flex;align-items:center;justify-content:center;color:#fff;background:#252a30;border-radius:7px;width:26px;height:26px;font-size:14px">✦</span><b style="font-size:15px">Kozmik Cloud Dashboard</b></div>
+    <h1 style="font-size:18px;margin:0 0 8px">ログイン</h1>
+    <p style="font-size:11px;color:#89919a;margin:0 0 18px">ダッシュボードのパスワードを入力してください。</p>
+    <label class="field"><span>パスワード</span><input id="password" type="password" placeholder="••••••••" autofocus></label>
+    <div id="error" style="display:none;background:#fdf0ef;border:1px solid #f3c6c2;border-radius:8px;padding:10px 12px;font-size:11px;color:#a14a42;margin-bottom:12px"></div>
+    <button type="submit" class="primary-button" style="width:100%;justify-content:center">ログイン</button>
+  </form>
+</div>
+<script>
+document.querySelector('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const password = document.querySelector('#password').value;
+  const error = document.querySelector('#error');
+  error.style.display = 'none';
+  const btn = e.target.querySelector('button');
+  btn.disabled = true; btn.textContent = '確認中...';
+  try {
+    const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { location.href = '/'; return; }
+    error.textContent = data.message || 'パスワードが正しくありません';
+    error.style.display = 'block';
+  } catch { error.textContent = 'サーバーに接続できません'; error.style.display = 'block'; }
+  finally { btn.disabled = false; btn.textContent = 'ログイン'; }
+});
+fetch('/api/auth/check').then(r=>r.json()).then(d=>{ if(d.authenticated) location.href='/'; }).catch(()=>{});
+</script>
+</body>
+</html>

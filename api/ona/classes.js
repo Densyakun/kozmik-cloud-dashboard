@@ -1,6 +1,7 @@
-import { getProviders, onaApi } from './_lib/index.js';
+import { getProviders, onaApi, isAuthenticated } from '../_lib/index.js';
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
+  if (!isAuthenticated(req)) return res.status(401).json({ message: '認証が必要です', code: 'unauthorized' });
   if (!getProviders().ona) return res.status(400).json({ message: 'ONA_PERSONAL_ACCESS_TOKEN が設定されていません。' });
   try {
     const data = await onaApi('EnvironmentService/ListEnvironmentClasses', {});

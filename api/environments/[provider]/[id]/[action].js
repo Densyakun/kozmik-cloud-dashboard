@@ -1,5 +1,6 @@
-import { getProviders, github } from '../../../_lib/index.js';
+import { getProviders, github, isAuthenticated } from '../../../_lib/index.js';
 export default async function handler(req, res) {
+  if (!isAuthenticated(req)) return res.status(401).json({ message: '認証が必要です', code: 'unauthorized' });
   if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return res.status(405).json({ message: 'Method Not Allowed' }); }
   const { provider, id, action } = req.query;
   if (provider !== 'github' || !['start', 'stop'].includes(action)) return res.status(400).json({ message: 'この操作は現在GitHub Codespacesで利用できます。' });

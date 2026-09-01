@@ -1,5 +1,9 @@
 const toast = document.querySelector('#toast');
 function notify(message) { toast.textContent = message; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); }
+fetch('/api/auth/check').then(r=>r.json()).then(d=>{ if(d.required && !d.authenticated) location.href='/login.html'; }).catch(()=>{});
+document.querySelector('#logoutBtn')?.addEventListener('click', async ()=>{ await fetch('/api/logout',{method:'POST'}); location.href='/login.html'; });
+const origFetch = window.fetch;
+window.fetch = async (...args) => { const res = await origFetch(...args); if(res.status===401){ const ct=res.headers.get('content-type')||''; if(ct.includes('json')){ const d=await res.clone().json().catch(()=>({})); if(d.code==='unauthorized') location.href='/login.html'; } else location.href='/login.html'; } return res; };
 const newEnvDialog = document.querySelector('#newEnvDialog');
 document.querySelector('#cancelNewEnv').addEventListener('click', () => newEnvDialog.close());
 document.querySelector('#openSettings').addEventListener('click', () => document.querySelector('#setupDialog').showModal());

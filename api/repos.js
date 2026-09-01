@@ -1,6 +1,7 @@
-import { getProviders, github } from './_lib/index.js';
+import { getProviders, github, isAuthenticated } from './_lib/index.js';
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
+  if (!isAuthenticated(req)) return res.status(401).json({ message: '認証が必要です', code: 'unauthorized' });
   if (!getProviders().codespaces) return res.status(400).json({ message: 'GITHUB_CODESPACES_TOKEN が設定されていません。' });
   try {
     const data = await github('/user/repos?per_page=100&visibility=all&sort=updated');

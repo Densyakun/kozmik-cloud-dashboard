@@ -284,6 +284,25 @@ const providers = {
   ona: Boolean(env.ONA_PERSONAL_ACCESS_TOKEN),
   opencode: Boolean(env.OPENCODE_API_KEY),
 };
+const dashboardPassword = env.DASHBOARD_PASSWORD || env.KOZMIK_DASHBOARD_PASSWORD || '';
+const dashboardToken = dashboardPassword ? crypto.createHash('sha256').update(dashboardPassword).digest('hex') : '';
+function parseCookies(header) {
+  const out = {};
+  if (!header) return out;
+  for (const part of header.split(';')) { const [k, ...v] = part.trim().split('='); if (k) out[k] = decodeURIComponent(v.join('=')); }
+  return out;
+}
+function isAuthenticated(req) {
+  if (!dashboardPassword) return true;
+  const cookies = parseCookies(req.headers.cookie);
+  return cookies.kcd_auth === dashboardToken;
+}
+function setAuthCookie(res) {
+  res.setHeader('Set-Cookie', `kcd_auth=${dashboardToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`);
+}
+function clearAuthCookie(res) {
+  res.setHeader('Set-Cookie', `kcd_auth=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
 
 async function github(pathname, options = {}) {
   const result = await fetch(`https://api.github.com${pathname}`, {
@@ -429,6 +448,25 @@ function ensureOcProxy(environmentId, tunnelPort) {
 
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
+  if (url.pathname === '/api/auth/check') {
+    if (!dashboardPassword) return json(response, 200, { required: false, authenticated: true });
+    return json(response, 200, { required: true, authenticated: isAuthenticated(request) });
+  }
+  if (url.pathname === '/api/login' && request.method === 'POST') {
+    if (!dashboardPassword) return json(response, 200, { ok: true });
+    const body = await readBody(request);
+    if (String(body.password || '') === dashboardPassword) { setAuthCookie(response); return json(response, 200, { ok: true }); }
+    return json(response, 401, { message: 'パスワードが正しくありません' });
+  }
+  if (url.pathname === '/api/logout' && request.method === 'POST') { clearAuthCookie(response); return json(response, 200, { ok: true }); }
+  const publicPaths = ['/login', '/login.html', '/api/login', '/api/auth/check', '/api/logout'];
+  const isPublic = publicPaths.includes(url.pathname) || url.pathname === '/style.css';
+  if (!isPublic && dashboardPassword && !isAuthenticated(request)) {
+    if (url.pathname.startsWith('/api/')) return json(response, 401, { message: '認証が必要です', code: 'unauthorized' });
+    response.writeHead(302, { Location: '/login.html' });
+    return response.end();
+  }
+  if (url.pathname === '/login') { response.writeHead(302, { Location: '/login.html' }); return response.end(); }
   if (url.pathname === '/api/status') return json(response, 200, { providers });
   if (url.pathname === '/api/config') return json(response, 200, { configured: providers });
   if (url.pathname === '/api/environments' && request.method === 'GET') {

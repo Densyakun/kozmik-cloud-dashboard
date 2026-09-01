@@ -1,9 +1,37 @@
+import crypto from 'node:crypto';
 export function getProviders() {
   return {
     codespaces: Boolean(process.env.GITHUB_CODESPACES_TOKEN),
     ona: Boolean(process.env.ONA_PERSONAL_ACCESS_TOKEN),
     opencode: Boolean(process.env.OPENCODE_API_KEY),
   };
+}
+export function getDashboardPassword() {
+  return process.env.DASHBOARD_PASSWORD || process.env.KOZMIK_DASHBOARD_PASSWORD || '';
+}
+export function getDashboardToken() {
+  const pw = getDashboardPassword();
+  return pw ? crypto.createHash('sha256').update(pw).digest('hex') : '';
+}
+export function parseCookies(header) {
+  const out = {};
+  if (!header) return out;
+  for (const part of header.split(';')) { const [k, ...v] = part.trim().split('='); if (k) out[k.trim()] = decodeURIComponent(v.join('=')); }
+  return out;
+}
+export function isAuthenticated(req) {
+  const pw = getDashboardPassword();
+  if (!pw) return true;
+  const cookies = parseCookies(req.headers?.cookie || '');
+  return cookies.kcd_auth === getDashboardToken();
+}
+export function requireAuth(req, res) {
+  if (isAuthenticated(req)) return true;
+  const isApi = req.url?.startsWith('/api/');
+  if (isApi) { res.status(401).json({ message: '認証が必要です', code: 'unauthorized' }); return false; }
+  res.writeHead?.(302, { Location: '/login.html' });
+  if (res.redirect) res.redirect('/login.html');
+  return false;
 }
 
 export async function github(pathname, options = {}) {

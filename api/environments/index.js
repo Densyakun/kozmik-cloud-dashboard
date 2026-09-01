@@ -1,6 +1,7 @@
-import { getProviders, github, onaApi, normalizeGithub } from './_lib/index.js';
+import { getProviders, github, onaApi, normalizeGithub, isAuthenticated } from '../_lib/index.js';
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
+  if (!isAuthenticated(req)) return res.status(401).json({ message: '認証が必要です', code: 'unauthorized' });
   const providers = getProviders();
   if (req.method === 'GET') {
     const environments = [];
