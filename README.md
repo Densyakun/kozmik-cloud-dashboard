@@ -73,12 +73,14 @@ Ona製品のAPIドメインは組織ごとに異なる場合があります（�
 
 ```powershell
 vercel --prod
-# Vercelダッシュボードで以下を設定: GITHUB_CODESPACES_TOKEN, ONA_PERSONAL_ACCESS_TOKEN, OPENCODE_API_KEY
+# Vercelダッシュボードで以下を設定: GITHUB_CODESPACES_TOKEN, ONA_PERSONAL_ACCESS_TOKEN（OpenCodeの起動をVercelで行わないため OPENCODE_API_KEY は任意）
 ```
 
-- `api/` 配下がVercel Functionsとしてデプロイされ、`public/` が静的配信されます。`vercel.json` で `maxDuration: 10` に設定済みです。
-- **Vercel上ではCodespacesの一覧・作成・起動・停止・削除（GitHub/Ona APIの薄い制御面）のみ利用可能**です。`POST /api/opencode/serve` は `501 not_available_on_vercel` を返します（SSHトンネル/プロキシはステートレスなFunctionsで保持できないため）。
-- フル機能（スマホからワンクリックで `opencode serve` 起動・固定URL発行）は引き続きローカルの `node server.js` で利用できます。
+- Vercelはプロジェクトを自動検出し、本リポジトリでは `server.js`（Node.js）を**1つのサーバーレス関数**としてデプロイします。`api/` 配下のFunctions・`public/` の静的配信に切り替えたい場合は、Vercelプロジェクト設定のFramework Presetを「Other」に変更してください。
+- GitHub Codespaces/Ona Cloud の**一覧・作成・起動・停止・削除（薄い制御面）はVercel上でも利用できます**。
+- Vercel上では `POST /api/opencode/serve` は **`501 not_available_on_vercel`** を返します（サーバーレス関数はステートレスのため、SSHトンネル・固定公開ポート・バイナリ転送を保持できません）。UIでも「OpenCode起動」ボタンは非表示になり、案内が表示されます。
+- Codespacesに `opencode serve` を起動して専用URLで使う**フル機能は、ローカルで `node server.js`**（`gh` CLI必要）を実行してください。
+- Vercel上でOpenCodeを利用したい場合の代替案: 対象リポジトリの `.devcontainer/` に `forwardPorts` / `portsAttributes` と `onCreateCommand`/`postStartCommand`（opencodeの取得・起動）を設定してCodespacesへデプロイし、`gh codespace ports visibility 4096:public` で公開した Codespaces公開URL（`https://<codespace>-4096.app.github.dev`）経由でアクセスします。
 
 <details>
 <summary>なぜ従来の自己ホスト方式はVercelで動作しないか</summary>

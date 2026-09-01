@@ -59,6 +59,12 @@ async function runOpenCodeServe(environmentId) {
   state.username = env.OPENCODE_SERVER_USERNAME || 'opencode';
   serveStates.set(environmentId, state);
   const password = env.OPENCODE_SERVER_PASSWORD || crypto.randomBytes(12).toString('base64url');
+  if (isVercel) {
+    state.status = 'failed';
+    state.detail = null;
+    state.error = 'OpenCodeのSSHトンネル起動はVercelでは利用できません（サーバーレス関数ではSSHトンネルを保持できないため）。ローカルの node server.js でご利用ください。';
+    return;
+  }
   const ghPath = await resolveGh();
   if (!ghPath) {
     state.status = 'failed';
@@ -278,6 +284,11 @@ if (existsSync(envPath)) {
 }
 Object.assign(env, process.env);
 
+// Vercelのサーバーレスランタイムでは process.env.VERCEL が設定される。
+// ステートレスな関数ではSSHトンネル・固定公開ポートを保持できないため、
+// opencode serveの起動は無効化し、案内メッセージを返す。
+const isVercel = Boolean(process.env.VERCEL);
+
 const serverPort = Number(env.PORT || 3000);
 const providers = {
   codespaces: Boolean(env.GITHUB_CODESPACES_TOKEN),
@@ -467,8 +478,8 @@ const server = http.createServer(async (request, response) => {
     return response.end();
   }
   if (url.pathname === '/login') { response.writeHead(302, { Location: '/login.html' }); return response.end(); }
-  if (url.pathname === '/api/status') return json(response, 200, { providers });
-  if (url.pathname === '/api/config') return json(response, 200, { configured: providers });
+  if (url.pathname === '/api/status') return json(response, 200, { providers, vercel: isVercel });
+  if (url.pathname === '/api/config') return json(response, 200, { configured: providers, vercel: isVercel });
   if (url.pathname === '/api/environments' && request.method === 'GET') {
     const environments = [];
     const errors = [];
@@ -591,6 +602,12 @@ const server = http.createServer(async (request, response) => {
     const body = await readBody(request);
     if (!providers.codespaces) return json(response, 400, { message: 'GitHub CodespacesのPersonal access tokenを設定してください。' });
     if (!body.environmentId) return json(response, 400, { message: '起動対象の環境が指定されていません。' });
+    if (isVercel) {
+      return json(response, 501, {
+        code: 'not_available_on_vercel',
+        message: 'OpenCodeのSSHトンネル起動はVercelでは利用できません。Vercelの関数はステートレスなため、SSHトンネルや固定公開ポートを保持できません。完全な機能はローカルの node server.js で利用するか、対象リポジトリの .devcontainer に forwardPorts と opencode 起動を設定し、Codespaces の公開URL（https://<codespace>-4096.app.github.dev）をご利用ください。',
+      });
+    }
     if (serveStates.get(body.environmentId)?.status === 'starting' || serveStates.get(body.environmentId)?.status === 'running') {
       return json(response, 200, { status: serveStates.get(body.environmentId).status });
     }
@@ -598,6 +615,7 @@ const server = http.createServer(async (request, response) => {
     return json(response, 202, { status: 'starting' });
   }
   if (url.pathname === '/api/opencode/status' && request.method === 'GET') {
+    if (isVercel) return json(response, 200, { states: [], vercel: true, message: 'OpenCodeトンネルはVercelでは提供されません。' });
     if (providers.codespaces) {
       for (const [environmentId, state] of serveStates) {
         if (state.status !== 'running' || !state.port) continue;

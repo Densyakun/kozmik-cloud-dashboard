@@ -1,5 +1,7 @@
 const toast = document.querySelector('#toast');
 function notify(message) { toast.textContent = message; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); }
+let isVercel = false;
+const OPENCODE_LIMIT_TITLE = 'このVercelデプロイはサーバーレス（ステートレス）のため、SSHトンネルや固定公開ポートを保持できません。完全な機能はローカルで npm start（gh CLI必須）で利用するか、対象リポジトリの .devcontainer に forwardPorts と opencode 起動を設定し、Codespaces の公開URL（https://<codespace>-4096.app.github.dev）をご利用ください。';
 fetch('/api/auth/check').then(r=>r.json()).then(d=>{ if(d.required && !d.authenticated) location.href='/login.html'; }).catch(()=>{});
 document.querySelector('#logoutBtn')?.addEventListener('click', async ()=>{ await fetch('/api/logout',{method:'POST'}); location.href='/login.html'; });
 const origFetch = window.fetch;
@@ -125,9 +127,24 @@ async function launchOpenCode(environmentId) {
   if (badge) { badge.className = `opencode-status os-starting`; badge.innerHTML = `<span class="os-badge starting">◐ 起動中…</span><span class="os-detail">リクエスト送信中…</span>`; }
   try {
     const result = await fetch('/api/opencode/serve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ environmentId }) });
-    const data = await result.json();
+    let data = {};
+    try { data = await result.json(); } catch { data = {}; }
+    if (data.code === 'not_available_on_vercel') {
+      if (badge) {
+        badge.className = `opencode-status os-failed`;
+        badge.innerHTML = `<span class="os-badge failed">● 利用不可</span><span class="os-error">VercelではOpenCodeのSSHトンネル起動を利用できません。READMEの案内を参照してください。</span>`;
+      }
+      notify('VercelではOpenCode起動を利用できません');
+      return;
+    }
     if (result.ok) notify(data.status === 'running' ? 'OpenCodeは既に起動しています' : 'OpenCode serve を起動しています（転送含め数分かかります）...');
-    else notify(data.message || 'OpenCodeを起動できません');
+    else {
+      if (badge) {
+        badge.className = `opencode-status os-failed`;
+        badge.innerHTML = `<span class="os-badge failed">● 失敗</span><span class="os-error">${data.message || 'OpenCodeを起動できません'}</span>`;
+      }
+      notify(data.message || 'OpenCodeを起動できません');
+    }
   } catch { notify('サーバーに接続できません'); }
 }
 
@@ -138,6 +155,7 @@ async function pollServeStatus() {
   try {
     const result = await fetch('/api/opencode/status');
     const data = await result.json();
+    if (data.vercel) isVercel = true;
     const known = new Set((data.states || []).map((s) => s.environmentId));
     (data.states || []).forEach((state) => {
       const badge = document.querySelector(`.opencode-status[data-env="${state.environmentId}"]`);
@@ -189,14 +207,16 @@ async function loadConnectedEnvironments() {
   refreshButton.disabled = true;
   try {
     const config = await fetch('/api/config').then((response) => response.json());
+    isVercel = !!config.vercel;
     const missing = [];
     if (!config.configured.codespaces) missing.push('GITHUB_CODESPACES_TOKEN');
     if (!config.configured.ona) missing.push('ONA_PERSONAL_ACCESS_TOKEN');
-    if (!config.configured.opencode) missing.push('OPENCODE_API_KEY');
+    if (!config.configured.opencode && !isVercel) missing.push('OPENCODE_API_KEY');
     const alert = document.querySelector('#configAlert');
     if (missing.length) {
       alert.hidden = false;
-      alert.innerHTML = `<strong>設定が必要です</strong><span>${missing.join(' / ')} が未設定です。.env.local を設定してサーバーを再起動してください。</span><button class="primary-button" onclick="document.querySelector('#setupDialog').showModal()">設定手順を見る</button>`;
+      const hint = isVercel ? 'Vercelのプロジェクト設定（Environment Variables）に設定してください。' : '.env.local を設定してサーバーを再起動してください。';
+      alert.innerHTML = `<strong>設定が必要です</strong><span>${missing.join(' / ')} が未設定です。${hint}</span><button class="primary-button" onclick="document.querySelector('#setupDialog').showModal()">設定手順を見る</button>`;
     } else alert.hidden = true;
     const result = await fetch('/api/environments');
     const data = await result.json();
@@ -206,10 +226,15 @@ async function loadConnectedEnvironments() {
     const list = document.querySelector('#environmentList');
     list.innerHTML = data.environments.map((item) => {
       const running = String(item.state).toLowerCase().includes('run') || ['available', 'active'].includes(String(item.state).toLowerCase());
-      const opencodeButton = item.providerId === 'github' ? `<button class="opencode-button" data-env="${item.id}">OpenCode起動</button>` : '';
-      const opencodeStatus = item.providerId === 'github' ? `<div class="opencode-status" data-env="${item.id}"></div>` : '';
-      const stopButton = item.providerId === 'github' ? (running ? `<button class="stop-button" data-provider="${item.providerId}" data-env="${item.id}">停止</button>` : `<button class="start-button" data-provider="${item.providerId}" data-env="${item.id}">起動</button>`) : '';
-      return `<article class="environment-card ${running ? 'running' : 'paused'}"><div class="card-top"><div class="provider-icon ${item.providerId === 'github' ? 'github' : 'ona'}">${item.providerId === 'github' ? '◖' : 'ona'}</div><div class="env-title"><h3>${item.name}</h3><div class="meta"><span class="pill ${running ? 'live' : 'pause'}">● ${running ? 'Running' : 'Paused'}</span><span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div>${opencodeStatus}<div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${opencodeButton}${stopButton}<button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="${item.providerId}" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
+      const isGithub = item.providerId === 'github';
+      const opencodeCell = isGithub
+        ? (isVercel
+            ? `<div class="opencode-vercel-note" title="${OPENCODE_LIMIT_TITLE.replace(/"/g, '&quot;')}">OpenCode起動はVercelでは利用できません <span class="os-tip">ℹ</span></div>`
+            : `<div class="opencode-status" data-env="${item.id}"></div>`)
+        : '';
+      const opencodeButton = isGithub && !isVercel ? `<button class="opencode-button" data-env="${item.id}">OpenCode起動</button>` : '';
+      const stopButton = isGithub ? (running ? `<button class="stop-button" data-provider="${item.providerId}" data-env="${item.id}">停止</button>` : `<button class="start-button" data-provider="${item.providerId}" data-env="${item.id}">起動</button>`) : '';
+      return `<article class="environment-card ${running ? 'running' : 'paused'}"><div class="card-top"><div class="provider-icon ${item.providerId === 'github' ? 'github' : 'ona'}">${item.providerId === 'github' ? '◖' : 'ona'}</div><div class="env-title"><h3>${item.name}</h3><div class="meta"><span class="pill ${running ? 'live' : 'pause'}">● ${running ? 'Running' : 'Paused'}</span><span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div>${opencodeCell}<div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${opencodeButton}${stopButton}<button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="${item.providerId}" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
     }).join('');
     bindEnvironmentActions();
   } catch (error) {
