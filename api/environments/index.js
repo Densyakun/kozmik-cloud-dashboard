@@ -1,4 +1,4 @@
-import { getProviders, github, onaApi, normalizeGithub, isAuthenticated } from '../_lib/index.js';
+import { getProviders, github, normalizeGithub, isAuthenticated } from '../_lib/index.js';
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (!isAuthenticated(req)) return res.status(401).json({ message: '認証が必要です', code: 'unauthorized' });
@@ -9,12 +9,6 @@ export default async function handler(req, res) {
     if (providers.codespaces) {
       try { const data = await github('/user/codespaces?per_page=100'); environments.push(...(data.codespaces || []).map(normalizeGithub)); } catch { errors.push('GitHub Codespaces'); }
     }
-    if (providers.ona) {
-      try {
-        const data = await onaApi('EnvironmentService/ListEnvironments', {});
-        environments.push(...(data.environments || []).map((item) => ({ id: item.id, name: item.displayName || item.metadata?.name || item.id, provider: 'Ona Cloud', providerId: 'ona', state: item.status?.phase || item.phase || 'ENVIRONMENT_PHASE_UNSPECIFIED', branch: item.spec?.content?.initializer?.specs?.[0]?.git?.cloneTarget || 'main', repository: item.metadata?.originalContextUrl || '-', url: item.status?.environmentUrls?.web || item.url, updatedAt: item.metadata?.lastStartedAt || item.updatedAt })));
-      } catch (e) { console.error('ona error:', e.message); errors.push('Ona Cloud'); }
-    }
     return res.status(200).json({ environments, errors });
   }
   if (req.method === 'POST') {
@@ -24,25 +18,6 @@ export default async function handler(req, res) {
       for await (const c of req) chunks.push(c);
       const raw = Buffer.concat(chunks).toString('utf8');
       body = raw ? JSON.parse(raw) : {};
-    }
-    if (body.provider === 'ona') {
-      if (!providers.ona) return res.status(400).json({ message: 'ONA_PERSONAL_ACCESS_TOKEN が設定されていません。' });
-      const repoUrl = String(body.repoUrl || '').trim();
-      const machineClass = String(body.machineClass || '').trim();
-      if (!repoUrl) return res.status(400).json({ message: 'リポジトリのURLを入力してください。' });
-      if (!machineClass) return res.status(400).json({ message: 'マシンクラスを選択してください。' });
-      try {
-        const spec = { spec: { specVersion: '1', machine: { class: machineClass }, content: { initializer: { specs: [{ contextUrl: { url: repoUrl } }] } } } };
-        if (body.name) spec.name = String(body.name);
-        const payload = await onaApi('EnvironmentService/CreateEnvironment', spec);
-        const item = payload.environment || {};
-        return res.status(201).json({ id: item.id, name: body.name || item.id, repository: repoUrl, state: item.status?.phase || 'ENVIRONMENT_PHASE_UNSPECIFIED', url: item.status?.environmentUrls?.web || null });
-      } catch (e) {
-        const reason = e.message || '';
-        const billing = /subscription/i.test(reason);
-        const guide = billing ? 'このアカウントの組織はアクティブな契約がありません。Onaコンソールの「Settings > Billing」で契約を開始してください。' : '';
-        return res.status(billing ? 403 : 502).json({ code: billing ? 'needs_subscription' : 'create_failed', message: `Ona Cloudの環境作成に失敗しました。${guide}${reason}` });
-      }
     }
     if (!providers.codespaces) return res.status(400).json({ message: 'GITHUB_CODESPACES_TOKEN が設定されていません。' });
     if (!body.repositoryId && !body.repo) return res.status(400).json({ message: 'リポジトリが必要です。自分のリポジトリを選ぶか、GitHubで先にリポジトリを作成してください。' });

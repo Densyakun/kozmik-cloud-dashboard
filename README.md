@@ -1,6 +1,6 @@
 # Kozmik Cloud Dashboard
 
-GitHub Codespaces と Ona Cloud の開発環境をスマホから管理するためのWebアプリです。モックは表示せず、設定済みプロバイダーの実データだけを表示します。
+GitHub Codespaces の開発環境をスマホから管理するためのWebアプリです。モックは表示せず、設定済みプロバイダーの実データだけを表示します。
 
 > **OpenCodeはCodespace内で自己ホストします。** ダッシュボードの「OpenCode起動」ボタンでは、対象のCodespaceを GitHub REST API で起動し、Codespaces標準のポート転送URL（`https://<codespace>-4096.app.github.dev`）を表示します。`opencode` 本体は Codespace 内の `.devcontainer`（`postStartCommand`）によって自動インストール・常駐起動されるため、ダッシュボード側に `gh` CLI や SSH トンネル、バイナリ転送は一切不要です。ローカルでもVercel上でも同一の動作です。
 
@@ -16,7 +16,6 @@ Copy-Item .env.local.example .env.local
 
 ```env
 GITHUB_CODESPACES_TOKEN=github_pat_...
-ONA_PERSONAL_ACCESS_TOKEN=...
 DASHBOARD_PASSWORD=your-secret-password
 ```
 
@@ -71,19 +70,11 @@ API/CLIで作成して一度もエディタを開いていないCodespaceでは�
 
 Personal access tokenはサーバー側でのみ読み込み、ブラウザへ返しません。`/api/status` と `/api/config` は現在の設定状態のみ返します。
 
-`GET /api/environments` は設定済みのCodespacesとOna Cloudから環境を取得します。GitHub Codespacesについては公式REST APIを利用し、一覧・作成・起動・停止・削除に対応しています。Ona Cloudは公式Connect APIの`ListEnvironments`を利用します。
+`GET /api/environments` は設定済みのCodespacesから環境を取得します。GitHub Codespacesについては公式REST APIを利用し、一覧・作成・起動・停止・削除に対応しています。
 
-`POST /api/environments` は`provider`に従って環境を作成します。`github`はリポジトリID/refでCodespacesを作成、`ona`はリポジトリURLとマシンクラスUUIDで`EnvironmentService/CreateEnvironment`を呼び出します。`GET /api/ona/classes` はOna側の利用可能なマシンクラス一覧を返します。
+`POST /api/environments` はリポジトリID/refでCodespacesを作成します。
 
 `POST /api/opencode/serve` は、GitHub REST API で対象Codespaceを起動します（停止中なら `POST /user/codespaces/{name}/start` を呼び出し、起動中・稼働中なら何もしません）。状態はすぐには反映されないため、フロントエンドは `GET /api/opencode/status?ids=<コードスペース名のカンマ区切り>` を5秒間隔でポーリングします。
-
-## Ona Cloudの環境作成について
-
-Ona Cloudでは、Connect APIの`EnvironmentService/CreateEnvironment`で環境を作成できます。作成には**環境クラス（マシンクラス）UUID**と**リポジトリURL**が必要で（`spec.machine.class` / `spec.content.initializer.specs[].contextUrl.url`）、一覧から環境クラスを取得して送信します。
-
-ただし、**Ona新製品には無料枠がありません**（公式PricingはCore 約$20/月〜 とEnterpriseのみ。OCU制）。このアカウントの組織には**アクティブな契約（subscription）がないため**、現状はAPIが`failed_precondition`（"your organization requires an active subscription... Settings > Billing"）を返し、**環境の作成はできません**。実装はされていますが、Onaコンソールの「Settings > Billing」でCore等の契約を開始すると利用できます。「無料枠があるはず」というのは旧Gitpodの無料プランとの混同です。一覧・削除は契約に関係なくAPIで行えます。
-
-Ona製品のAPIドメインは組織ごとに異なる場合があります（例: `https://app.ona.com`、`app.gitpod.io`）。`app.ona.com` は308リダイレクトで実際の管理プレーンへ転送され、アプリは認証を再付与して追従します。ホストは`.env.local`の`ONA_API_HOST`で上書きできます（既定`https://app.ona.com`）。
 
 ## Vercelへのデプロイについて
 
@@ -91,7 +82,7 @@ Ona製品のAPIドメインは組織ごとに異なる場合があります（�
 
 ```powershell
 vercel --prod
-# Vercelダッシュボードで以下を設定: GITHUB_CODESPACES_TOKEN, ONA_PERSONAL_ACCESS_TOKEN, DASHBOARD_PASSWORD（任意）
+# Vercelダッシュボードで以下を設定: GITHUB_CODESPACES_TOKEN, DASHBOARD_PASSWORD（任意）
 ```
 
 - `/api/*` は `api/` 配下のVercel Functionsで処理されます（`server.js` はローカル実行用です）
@@ -119,4 +110,4 @@ vercel --prod
 2. `GET /user/codespaces/{name}` の state をポーリングし、Runningなら `https://<codespace>-4096.app.github.dev` を公開URLとして返却
 3. URLはカード上で「開く ↗」「URLをコピー」として表示（起動待ち中は「起動中…」、失敗時はエラー表示）
 
-OpenCode起動は現在GitHub Codespacesに対応しています（Ona Cloudは一覧・削除のみ）。公開URLへのアクセス可否はCodespace側のポート可視性設定（private/public）に依存するため、上記「ポート公開（public）について」を確認してください。
+OpenCode起動はGitHub Codespacesに対応しています。公開URLへのアクセス可否はCodespace側のポート可視性設定（private/public）に依存するため、上記「ポート公開（public）について」を確認してください。

@@ -8,17 +8,6 @@ window.fetch = async (...args) => { const res = await origFetch(...args); if(res
 const newEnvDialog = document.querySelector('#newEnvDialog');
 document.querySelector('#cancelNewEnv').addEventListener('click', () => newEnvDialog.close());
 document.querySelector('#openSettings').addEventListener('click', () => document.querySelector('#setupDialog').showModal());
-let newEnvProvider = 'github';
-function setNewEnvProvider(provider) {
-  newEnvProvider = provider;
-  document.querySelectorAll('#providerSelect .provider-option').forEach((btn) => btn.classList.toggle('active', btn.dataset.provider === provider));
-  const isOna = provider === 'ona';
-  document.querySelector('#githubRepoField').hidden = isOna;
-  document.querySelector('#onaRepoField').hidden = !isOna;
-  document.querySelector('#onaClassField').hidden = !isOna;
-  if (isOna) loadOnaClasses();
-}
-document.querySelectorAll('#providerSelect .provider-option').forEach((btn) => btn.addEventListener('click', () => setNewEnvProvider(btn.dataset.provider)));
 document.querySelector('#newEnvForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const name = document.querySelector('#envName').value.trim();
@@ -28,24 +17,15 @@ document.querySelector('#newEnvForm').addEventListener('submit', async (event) =
   const errorBox = document.querySelector('#newEnvError');
   errorBox.hidden = true;
   try {
-    let result;
-    if (newEnvProvider === 'ona') {
-      const body = { provider: 'ona', repoUrl: document.querySelector('#onaRepoUrl').value.trim(), machineClass: document.querySelector('#onaMachineClass').value, name: name || undefined };
-      result = await fetch('/api/environments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    } else {
-      const body = { provider: 'github', name: name || undefined };
-      const repoOption = document.querySelector('#envRepo').selectedOptions[0];
-      const repo = repoOption ? repoOption.value : '';
-      if (repo !== '') { body.repositoryId = repoOption.dataset.id || undefined; body.repo = repo; }
-      result = await fetch('/api/environments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    }
+    const body = { provider: 'github', name: name || undefined };
+    const repoOption = document.querySelector('#envRepo').selectedOptions[0];
+    const repo = repoOption ? repoOption.value : '';
+    if (repo !== '') { body.repositoryId = repoOption.dataset.id || undefined; body.repo = repo; }
+    const result = await fetch('/api/environments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await result.json();
     if (!result.ok) {
       errorBox.hidden = false;
-      let actions = '';
-      if (data.code === 'needs_subscription') actions = `<div class="dialog-actions"><a class="ghost-button" href="https://app.gitpod.io/settings/billing" target="_blank" rel="noopener">OnaのBilling設定を開く ↗</a></div>`;
-      else if (newEnvProvider === 'ona') actions = `<div class="dialog-actions"><button type="button" class="ghost-button" onclick="document.querySelector('#newEnvDialog').close()">閉じる</button></div>`;
-      else actions = `<div class="dialog-actions"><button type="button" class="ghost-button" onclick="document.querySelector('#setupDialog').showModal()">設定を開く</button><a class="ghost-button" href="https://github.com/new" target="_blank" rel="noopener">リポジトリ作成 ↗</a></div>`;
+      const actions = `<div class="dialog-actions"><button type="button" class="ghost-button" onclick="document.querySelector('#setupDialog').showModal()">設定を開く</button><a class="ghost-button" href="https://github.com/new" target="_blank" rel="noopener">リポジトリ作成 ↗</a></div>`;
       errorBox.innerHTML = `<p>${data.message || '作成に失敗しました'}</p>${actions}`;
       return;
     }
@@ -66,19 +46,8 @@ async function loadRepos() {
     select.innerHTML = data.repos.map((item) => `<option value="${item.fullName}" data-id="${item.id}">${item.fullName}${item.private ? ' (private)' : ''}</option>`).join('');
   } catch { select.innerHTML = '<option value="">取得に失敗しました</option>'; }
 }
-async function loadOnaClasses() {
-  const select = document.querySelector('#onaMachineClass');
-  select.innerHTML = '<option value="">読み込み中...</option>';
-  try {
-    const result = await fetch('/api/ona/classes');
-    const data = await result.json();
-    if (!result.ok) { select.innerHTML = `<option value="">${data.message || '取得できません'}</option>`; return; }
-    if (!data.classes?.length) { select.innerHTML = '<option value="">利用可能なクラスがありません</option>'; return; }
-    select.innerHTML = data.classes.map((c) => `<option value="${c.id}">${c.name} — ${c.description}</option>`).join('');
-  } catch { select.innerHTML = '<option value="">取得に失敗しました</option>'; }
-}
 document.querySelector('#refreshRepos').addEventListener('click', loadRepos);
-document.querySelector('#newProject').addEventListener('click', () => { loadRepos(); setNewEnvProvider('github'); newEnvDialog.showModal(); });
+document.querySelector('#newProject').addEventListener('click', () => { loadRepos(); newEnvDialog.showModal(); });
 function bindEnvironmentActions() {
   document.querySelectorAll('.open-button').forEach((button) => button.addEventListener('click', () => { if (button.dataset.url) window.open(button.dataset.url, '_blank', 'noopener'); else notify(`${button.dataset.env} のワークスペースを開いています`); }));
   document.querySelectorAll('.opencode-button').forEach((button) => button.addEventListener('click', async () => { await launchOpenCode(button.dataset.env); }));
@@ -211,7 +180,6 @@ async function loadConnectedEnvironments() {
     isVercel = !!config.vercel;
     const missing = [];
     if (!config.configured.codespaces) missing.push('GITHUB_CODESPACES_TOKEN');
-    if (!config.configured.ona) missing.push('ONA_PERSONAL_ACCESS_TOKEN');
     const alert = document.querySelector('#configAlert');
     if (missing.length) {
       alert.hidden = false;
@@ -222,15 +190,11 @@ async function loadConnectedEnvironments() {
     const data = await result.json();
     if (data.errors?.length) notify(`${data.errors.join(' / ')} の取得に失敗しました。トークンの権限や有効期限を確認してください。`);
     document.querySelector('#environmentCount').textContent = String(data.environments?.length ?? 0);
-    if (!data.environments?.length) { document.querySelector('#environmentList').innerHTML = `<div class="empty-state"><strong>環境がありません</strong><span>${Object.values(config.configured).some(Boolean) ? '接続先に環境が見つかりませんでした。GitHub/Ona側でCodespace/Environmentを作成するか、トークンの権限を確認してください。' : 'トークンが未設定のため表示できません。'}</span><div class="empty-actions"><button class="primary-button" onclick="document.querySelector('#setupDialog').showModal()">設定を開く</button><button class="ghost-button" id="emptyRetry">再読み込み</button></div></div>`; document.querySelector('#emptyRetry').addEventListener('click', loadConnectedEnvironments); return; }
+    if (!data.environments?.length) { document.querySelector('#environmentList').innerHTML = `<div class="empty-state"><strong>環境がありません</strong><span>${Object.values(config.configured).some(Boolean) ? '接続先に環境が見つかりませんでした。GitHub側でCodespaceを作成するか、トークンの権限を確認してください。' : 'トークンが未設定のため表示できません。'}</span><div class="empty-actions"><button class="primary-button" onclick="document.querySelector('#setupDialog').showModal()">設定を開く</button><button class="ghost-button" id="emptyRetry">再読み込み</button></div></div>`; document.querySelector('#emptyRetry').addEventListener('click', loadConnectedEnvironments); return; }
     const list = document.querySelector('#environmentList');
     list.innerHTML = data.environments.map((item) => {
       const running = String(item.state).toLowerCase().includes('run') || ['available', 'active'].includes(String(item.state).toLowerCase());
-      const isGithub = item.providerId === 'github';
-      const opencodeCell = isGithub ? `<div class="opencode-status" data-env="${item.id}"></div>` : '';
-      const opencodeButton = isGithub ? `<button class="opencode-button" data-env="${item.id}">OpenCode起動</button>` : '';
-      const stopButton = isGithub ? (running ? `<button class="stop-button" data-provider="${item.providerId}" data-env="${item.id}">停止</button>` : `<button class="start-button" data-provider="${item.providerId}" data-env="${item.id}">起動</button>`) : '';
-      return `<article class="environment-card ${running ? 'running' : 'paused'}"><div class="card-top"><div class="provider-icon ${item.providerId === 'github' ? 'github' : 'ona'}">${item.providerId === 'github' ? '◖' : 'ona'}</div><div class="env-title"><h3>${item.name}</h3><div class="meta"><span class="pill ${running ? 'live' : 'pause'}">● ${running ? 'Running' : 'Paused'}</span><span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div>${opencodeCell}<div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${opencodeButton}${stopButton}<button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="${item.providerId}" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
+      return `<article class="environment-card ${running ? 'running' : 'paused'}"><div class="card-top"><div class="provider-icon github">◖</div><div class="env-title"><h3>${item.name}</h3><div class="meta"><span class="pill ${running ? 'live' : 'pause'}">● ${running ? 'Running' : 'Paused'}</span><span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div><div class="opencode-status" data-env="${item.id}"></div><div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${running ? `<button class="stop-button" data-provider="github" data-env="${item.id}">停止</button>` : `<button class="start-button" data-provider="github" data-env="${item.id}">起動</button>`}<button class="opencode-button" data-env="${item.id}">OpenCode起動</button><button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="github" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
     }).join('');
     bindEnvironmentActions();
     pollServeStatus();

@@ -71,7 +71,6 @@ export function describeCodespaceState(state) {
 export function getProviders() {
   return {
     codespaces: Boolean(process.env.GITHUB_CODESPACES_TOKEN),
-    ona: Boolean(process.env.ONA_PERSONAL_ACCESS_TOKEN),
     opencode: Boolean(process.env.OPENCODE_API_KEY),
   };
 }
@@ -118,36 +117,6 @@ export async function github(pathname, options = {}) {
     throw err;
   }
   return res.status === 204 ? null : res.json();
-}
-
-export async function onaApi(method, body = {}) {
-  const token = process.env.ONA_PERSONAL_ACCESS_TOKEN;
-  if (!token) throw Object.assign(new Error('ONA_PERSONAL_ACCESS_TOKEN が設定されていません'), { status: 400 });
-  const base = String(process.env.ONA_API_HOST || 'https://app.ona.com');
-  let url = `${base}/api/gitpod.v1.${method}`;
-  for (let i = 0; i < 5; i++) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      redirect: 'manual',
-    });
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get('location');
-      if (!loc) throw new Error(`Ona API redirect without location (${res.status})`);
-      url = new URL(loc, url).toString();
-      continue;
-    }
-    if (!res.ok) {
-      let detail = `Ona API ${res.status}`;
-      try { const b = await res.json(); detail = `${detail}: ${b.message || JSON.stringify(b)}`; } catch {}
-      const err = new Error(detail);
-      err.status = res.status;
-      throw err;
-    }
-    return res.json();
-  }
-  throw new Error('Ona API redirect loop');
 }
 
 export function normalizeGithub(item) {
