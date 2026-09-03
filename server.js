@@ -4,7 +4,8 @@ import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { opencodeCredentials, probeOpenCodeHealth } from './api/_lib/index.js';
+import { execFile } from 'node:child_process';
+import { opencodeCredentials, probeOpenCodeHealth, opencodeErrorDetail } from './api/_lib/index.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -136,6 +137,21 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+// Codespaces のポート転送に gh CLI で public を再適用する（ローカル実行時のみ）。
+// コンテナ再起動後などに転送の visibility が private へ戻ると、公開URLが
+// 404/5xx または GitHub サインイン（pf-signin）を返すため、再適用して回復を試みる。
+function ensurePublicForwardVisibility(environmentId) {
+  return new Promise((resolve) => {
+    try {
+      execFile('gh', ['codespace', 'ports', 'visibility', `${OPENCODE_PORT}:public`, '-c', environmentId], {
+        env: { ...process.env, GH_TOKEN: env.GITHUB_CODESPACES_TOKEN || '' },
+        windowsHide: true,
+        timeout: 15000,
+      }, (error) => resolve(!error));
+    } catch { resolve(false); }
+  });
+}
+
 async function codespaceStatusEntry(environmentId) {
   try {
     const codespace = await github(`/user/codespaces/${encodeURIComponent(environmentId)}`);
@@ -144,7 +160,12 @@ async function codespaceStatusEntry(environmentId) {
     const publicUrl = codespaceForwardUrl(environmentId);
     if (kind === 'running') {
       // CodespaceはRunningでも opencode の起動が追いついていないことがあるため、公開URLへヘルスチェックする
-      const health = await probeOpenCodeHealth(publicUrl, { env });
+      let health = await probeOpenCodeHealth(publicUrl, { env });
+      // トンネル層の応答（404/5xx/pf-signinリダイレクト）なら、ポート転送の公開設定を再適用して再確認する
+      if (!health.healthy && (health.tunnelRedirect || [404, 403, 502].includes(health.httpCode))) {
+        const repaired = await ensurePublicForwardVisibility(environmentId);
+        if (repaired) health = await probeOpenCodeHealth(publicUrl, { env });
+      }
       const opencode = health.healthy ? 'running' : health.httpCode === 0 ? 'starting' : 'error';
       return {
         ...base,
@@ -157,7 +178,7 @@ async function codespaceStatusEntry(environmentId) {
           ? 'opencodeが応答しています'
           : opencode === 'starting'
             ? 'opencodeは起動済みです。公開URLからBasic認証で接続できます。'
-            : `opencodeが未応答です（HTTP ${health.httpCode}）。しばらく待ってから再読み込みしてください。`,
+            : opencodeErrorDetail(health.httpCode, { environmentId }),
       };
     }
     if (kind === 'starting') return { ...base, state: 'starting', detail: 'Codespaceを起動しています…（通常1〜2分）', publicUrl };

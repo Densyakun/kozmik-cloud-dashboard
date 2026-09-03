@@ -22,17 +22,23 @@ export function opencodeCredentials(env = process.env) {
 export async function probeOpenCodeHealth(publicUrl, { env = process.env, timeoutMs = 4000 } = {}) {
   if (!publicUrl) return { healthy: false, httpCode: 0 };
   const { username, password } = opencodeCredentials(env);
+  const baseUrl = String(publicUrl).replace(/\/+$/, '');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${String(publicUrl).replace(/\/+$/, '')}/global/health`, {
+    const res = await fetch(`${baseUrl}/global/health`, {
+      redirect: 'follow',
       signal: controller.signal,
       headers: {
         Accept: 'application/json',
         Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
       },
     });
-    if (!res.ok) return { healthy: false, httpCode: res.status };
+    // private転送に戻っている場合、*.app.github.dev は GitHub のサインイン（pf-signin）へ
+    // リダイレクトする。最終URLがオリジンの公開URLと異なれば「トンネル層の応答」として区別する。
+    const finalUrl = String(res.url || '');
+    const tunnelRedirect = !finalUrl.startsWith(baseUrl);
+    if (!res.ok || tunnelRedirect) return { healthy: false, httpCode: res.status, tunnelRedirect };
     const body = await res.json();
     return { healthy: Boolean(body && body.healthy), version: body && body.version, httpCode: res.status };
   } catch {
@@ -40,6 +46,16 @@ export async function probeOpenCodeHealth(publicUrl, { env = process.env, timeou
   } finally {
     clearTimeout(timer);
   }
+}
+
+// opencode が未応答のときの表示文言。
+// トンネル層の応答（404/5xx/pf-signinへのリダイレクト）は opencode ではなく
+// Codespaces のポート転送の公開設定が外れている可能性が高いため、対処コマンドを案内する。
+export function opencodeErrorDetail(httpCode, { environmentId, port = OPENCODE_PORT } = {}) {
+  if (httpCode === 404 || httpCode === 403 || httpCode === 502 || (httpCode && httpCode >= 500)) {
+    return `opencodeが未応答です（HTTP ${httpCode}）。Codespacesのポート転送（トンネル）が公開設定から外れている可能性があります。数分待って再読み込みするか、ターミナルで「gh codespace ports visibility ${port}:public -c ${environmentId}」を実行してから再読み込みしてください。`;
+  }
+  return `opencodeが未応答です（HTTP ${httpCode || 0}）。しばらく待ってから再読み込みしてください。`;
 }
 
 // GitHub Codespaces の state をダッシュボード用の分類に変換する

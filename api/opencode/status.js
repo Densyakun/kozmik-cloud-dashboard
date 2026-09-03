@@ -1,4 +1,4 @@
-import { github, isAuthenticated, describeCodespaceState, codespaceForwardUrl, opencodeCredentials, probeOpenCodeHealth } from '../_lib/index.js';
+import { github, isAuthenticated, describeCodespaceState, codespaceForwardUrl, opencodeCredentials, probeOpenCodeHealth, opencodeErrorDetail } from '../_lib/index.js';
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (!isAuthenticated(req)) return res.status(401).json({ message: '認証が必要です', code: 'unauthorized' });
@@ -26,7 +26,7 @@ export default async function handler(req, res) {
             ? 'opencodeが応答しています'
             : opencode === 'starting'
               ? 'opencodeは起動済みです。公開URLからBasic認証で接続できます。'
-              : `opencodeが未応答です（HTTP ${health.httpCode}）。しばらく待ってから再読み込みしてください。`,
+              : opencodeErrorDetail(health.httpCode, { environmentId }),
         };
       }
       if (kind === 'starting') return { ...base, state: 'starting', detail: 'Codespaceを起動しています…（通常1〜2分）', publicUrl };
