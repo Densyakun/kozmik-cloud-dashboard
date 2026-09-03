@@ -156,7 +156,7 @@ async function codespaceStatusEntry(environmentId) {
         opencodeDetail: opencode === 'running'
           ? 'opencodeが応答しています'
           : opencode === 'starting'
-            ? 'opencodeの起動を待っています…（通常1〜2分）'
+            ? 'opencodeは起動済みです。公開URLからBasic認証で接続できます。'
             : `opencodeが未応答です（HTTP ${health.httpCode}）。しばらく待ってから再読み込みしてください。`,
       };
     }

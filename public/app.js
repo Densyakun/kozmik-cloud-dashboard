@@ -132,7 +132,7 @@ function renderOpenCodeBadge(badge, state) {
       ? `<span class="os-badge running">● 稼働中${state.version ? ` <em style="font-style:normal;opacity:.7">v${state.version}</em>` : ''}</span>`
       : state.opencode === 'error'
         ? `<span class="os-badge failed">● エラー</span><span class="os-error">${state.opencodeDetail || 'opencodeが未応答です'}</span>`
-        : `<span class="os-badge checking">◐ opencode起動準備中…</span><span class="os-detail">Codespaceは起動済み。opencodeの待受開始を待っています。</span>`;
+        : `<span class="os-badge checking">◐ opencodeは使用できます</span><span class="os-detail">Codespaceは起動済み。公開URLからBasic認証で接続できます。</span>`;
     badge.innerHTML = `${status}<a class="os-url" href="${state.publicUrl}" target="_blank" rel="noopener">開く ↗</a><span class="os-copy-row"><button type="button" class="os-copy" data-copy="url" data-url="${state.publicUrl}">URLをコピー</button></span>${auth}`;
   } else if (state.state === 'starting') {
     badge.innerHTML = `<span class="os-badge starting">◐ 起動中…</span><span class="os-detail">${state.detail || '準備中…'}</span>`;
