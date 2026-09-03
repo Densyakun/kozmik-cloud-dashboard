@@ -1,4 +1,23 @@
 import crypto from 'node:crypto';
+
+// opencode は Codespace 側（.devcontainer の postStartCommand）でポート4096に常駐させる。
+// ダッシュボードは GitHub REST API で起動/状態確認だけを行い、公開URLを表示する。
+const OPENCODE_PORT = 4096;
+
+export function codespaceForwardUrl(name) {
+  return `https://${name}-${OPENCODE_PORT}.app.github.dev`;
+}
+
+// GitHub Codespaces の state をダッシュボード用の分類に変換する
+export function describeCodespaceState(state) {
+  const st = String(state || '').toLowerCase();
+  if (/avail|run|active/.test(st)) return { kind: 'running' };
+  if (/start|provisio|created|queue|prepar|boot/.test(st)) return { kind: 'starting' };
+  if (/stopp|shut|archiv/.test(st)) return { kind: 'stopped' };
+  if (/fail|deleted|unknown/.test(st)) return { kind: 'failed' };
+  return { kind: 'starting' };
+}
+
 export function getProviders() {
   return {
     codespaces: Boolean(process.env.GITHUB_CODESPACES_TOKEN),

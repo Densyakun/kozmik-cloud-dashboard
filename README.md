@@ -2,7 +2,7 @@
 
 GitHub Codespaces と Ona Cloud の開発環境をスマホから管理するためのWebアプリです。モックは表示せず、設定済みプロバイダーの実データだけを表示します。
 
-> **Codespaces側の操作不要** — ダッシュボードの「OpenCode起動」ボタンだけで、停止中Codespaceの自動起動・opencodeバイナリの転送・`opencode serve`の起動・トンネル確立までを全自動で行います。Codespace内でターミナルを開いたりコマンドを打つ必要はありません。
+> **OpenCodeはCodespace内で自己ホストします。** ダッシュボードの「OpenCode起動」ボタンでは、対象のCodespaceを GitHub REST API で起動し、Codespaces標準のポート転送URL（`https://<codespace>-4096.app.github.dev`）を表示します。`opencode` 本体は Codespace 内の `.devcontainer`（`postStartCommand`）によって自動インストール・常駐起動されるため、ダッシュボード側に `gh` CLI や SSH トンネル、バイナリ転送は一切不要です。ローカルでもVercel上でも同一の動作です。
 
 ## 使い方
 
@@ -17,7 +17,6 @@ Copy-Item .env.local.example .env.local
 ```env
 GITHUB_CODESPACES_TOKEN=github_pat_...
 ONA_PERSONAL_ACCESS_TOKEN=...
-OPENCODE_API_KEY=...
 DASHBOARD_PASSWORD=your-secret-password
 ```
 
@@ -30,9 +29,39 @@ npm start
 4. `http://localhost:3000` を開く
    - 未設定なら「環境がありません」と表示され、必要な設定が案内されます
    - 設定済みなら `GET /api/environments` の実データが一覧に表示されます
-   - 各Codespaceの「OpenCode起動」で、そのCodespace内に `opencode serve` を起動して**専用の固定URL・ユーザー名・パスワード**を取得します（要 `gh` CLI）
+   - 各Codespaceの「OpenCode起動」で、そのCodespaceを **Codespacesの公開URL（`https://<codespace>-4096.app.github.dev`）** からブラウザで開きます
 
 スマホの場合は、PCと同じWi-Fiで `http://<PCのIP>:3000` を開いてください。`DASHBOARD_PASSWORD` を設定している場合は `/login.html` でパスワードログインが必要です。
+
+## OpenCodeを利用するための準備（Codespace側・初回のみ）
+
+OpenCodeはCodespace内で動作するため、対象リポジトリに `.devcontainer` が必要です。本リポジトリの `.devcontainer/` を参考（またはそのままコピー）にしてください。
+
+`.devcontainer/devcontainer.json` に含まれる内容:
+
+- `"image": "mcr.microsoft.com/devcontainers/universal:2"` — Codespaces標準のユニバーサルイメージ
+- `"forwardPorts": [4096]` — opencodeが使うポートを転送
+- `"portsAttributes"` — ポート4096の転送設定（既定は**private**。GitHubにログインしている本人だけがアクセス可能で安全）
+- `"postStartCommand"` — Codespace起動のたびに `opencode` を自動インストールし、`opencode web --hostname 0.0.0.0 --port 4096` を常駐起動（クラッシュ時は自動再起動）
+
+**手順:**
+
+1. 対象リポジトリのルートに `.devcontainer/devcontainer.json` を追加してコミット
+2. Codespacesでリポジトリを開いて **「Rebuild Container（コンテナーの再ビルド）」** を実行する（追加済みのCodespaceには再ビルド前に反映されません）
+3. `postStartCommand` により opencode がポート4096で起動し、`https://<codespace>-4096.app.github.dev` でアクセスできます
+
+### ポート公開（public）について
+
+- **システム既定（private）**: GitHub にログイン中のブラウザのみアクセスできます。opencodeはBasic認証なしで起動するため、**公開(public)するまでは本人以外はアクセスできず安全**です。
+- **全ユーザーに公開する場合**: ポートを public に設定します。
+  - `.devcontainer/devcontainer.json` の `portsAttributes."4096".visibility` に `"public"` を設定して再ビルドする
+  - または Codespaces の **PORTS タブ** / `gh codespace ports visibility 4096:public` で公開設定にする
+  - publicにする場合は、opencodeにBasic認証を設定してください（`.devcontainer` で `OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD` を設定し再ビルド。ユーザー名の既定は `opencode`）
+- 組織ポリシーで public ポートが無効な場合は、private のまま GitHub ログインで利用するか、組織設定の変更が必要です
+
+### ヘッドレス（エディタ未接続）Codespaceの注意
+
+API/CLIで作成して一度もエディタを開いていないCodespaceでは、ポート転送エージェント（`*.app.github.dev` の配信）が有効になるまで数十秒ほどかかる場合があります。「開く ↗」して読み込み中になる場合は、少し待って再読み込みしてください。それでも表示されない場合は、一度ブラウザからCodespaceのUI（`https://github.com/codespaces`）を開いてから再度やってみてください。
 
 ## 認証について
 
@@ -46,20 +75,9 @@ Personal access tokenはサーバー側でのみ読み込み、ブラウザへ�
 
 `POST /api/environments` は`provider`に従って環境を作成します。`github`はリポジトリID/refでCodespacesを作成、`ona`はリポジトリURLとマシンクラスUUIDで`EnvironmentService/CreateEnvironment`を呼び出します。`GET /api/ona/classes` はOna側の利用可能なマシンクラス一覧を返します。
 
-`POST /api/opencode/serve` は、選択したGitHub Codespacesに対してSSHで接続し、Codespace内に`opencode`を転送した上で`opencode serve`を起動し、`gh codespace ssh -L`のトンネルを確立します。
+`POST /api/opencode/serve` は、GitHub REST API で対象Codespaceを起動します（停止中なら `POST /user/codespaces/{name}/start` を呼び出し、起動中・稼働中なら何もしません）。状態はすぐには反映されないため、フロントエンドは `GET /api/opencode/status?ids=<コードスペース名のカンマ区切り>` を5秒間隔でポーリングします。
 
-### OpenCodeの公開について
-
-**Codespaces上で手動操作は不要です。** ダッシュボードからワンクリックで `opencode serve` が起動し、Codespace内でのコマンド入力やVS Code操作は必要ありません。
-
-Kozmik Cloud Dashboardは環境ごとに**固定の専用公開ポート**を開設し、`http://<サーバーのLAN IP>:<専用ポート>/`としてopencodeをルート配信します（SPA・WebSocketもそのまま動作し、パスワード認証でログインできます）。トンネルはループバックに張り、Kozmik Cloud Dashboardプロセスが0.0.0.0にバインドするため、同じネットワークのスマホから開けます。
-
-- 専用ポートは環境IDから固定で決まるため、**URLは起動のたびに変わりません**
-- 認証はBasic認証で、ユーザー名`OPENCODE_SERVER_USERNAME`（既定`opencode`）とパスワード`OPENCODE_SERVER_PASSWORD`（未設定なら毎回ランダム生成）を使用します
-- URLとパスワードはカード上でそれぞれ**個別にコピー**できます（未起動時は「未起動」と表示せず、稼働中の状態だけを表示します）
-- 停止中Codespaceは自動で起動した上でOpenCodeを起動します（Codespace側での操作不要）。環境削除には確認ダイアログが必要です
-
-### Ona Cloudの環境作成について
+## Ona Cloudの環境作成について
 
 Ona Cloudでは、Connect APIの`EnvironmentService/CreateEnvironment`で環境を作成できます。作成には**環境クラス（マシンクラス）UUID**と**リポジトリURL**が必要で（`spec.machine.class` / `spec.content.initializer.specs[].contextUrl.url`）、一覧から環境クラスを取得して送信します。
 
@@ -67,63 +85,38 @@ Ona Cloudでは、Connect APIの`EnvironmentService/CreateEnvironment`で環境�
 
 Ona製品のAPIドメインは組織ごとに異なる場合があります（例: `https://app.ona.com`、`app.gitpod.io`）。`app.ona.com` は308リダイレクトで実際の管理プレーンへ転送され、アプリは認証を再付与して追従します。ホストは`.env.local`の`ONA_API_HOST`で上書きできます（既定`https://app.ona.com`）。
 
-### Vercelへのデプロイについて
+## Vercelへのデプロイについて
 
-**本リポジトリはVercelデプロイに対応しています（薄い制御面アーキテクチャ）。**
+**本リポジトリはVercelデプロイに対応しており、OpenCode起動を含む全機能がローカルと同一で利用できます。**
 
 ```powershell
 vercel --prod
-# Vercelダッシュボードで以下を設定: GITHUB_CODESPACES_TOKEN, ONA_PERSONAL_ACCESS_TOKEN（OpenCodeの起動をVercelで行わないため OPENCODE_API_KEY は任意）
+# Vercelダッシュボードで以下を設定: GITHUB_CODESPACES_TOKEN, ONA_PERSONAL_ACCESS_TOKEN, DASHBOARD_PASSWORD（任意）
 ```
 
-- Vercelはプロジェクトを自動検出し、本リポジトリでは `server.js`（Node.js）を**1つのサーバーレス関数**としてデプロイします。`api/` 配下のFunctions・`public/` の静的配信に切り替えたい場合は、Vercelプロジェクト設定のFramework Presetを「Other」に変更してください。
-- GitHub Codespaces/Ona Cloud の**一覧・作成・起動・停止・削除（薄い制御面）はVercel上でも利用できます**。
-- Vercel上では `POST /api/opencode/serve` は **`501 not_available_on_vercel`** を返します（サーバーレス関数はステートレスのため、SSHトンネル・固定公開ポート・バイナリ転送を保持できません）。UIでも「OpenCode起動」ボタンは非表示になり、案内が表示されます。
-- Codespacesに `opencode serve` を起動して専用URLで使う**フル機能は、ローカルで `node server.js`**（`gh` CLI必要）を実行してください。
-- Vercel上でOpenCodeを利用したい場合の代替案: 対象リポジトリの `.devcontainer/` に `forwardPorts` / `portsAttributes` と `onCreateCommand`/`postStartCommand`（opencodeの取得・起動）を設定してCodespacesへデプロイし、`gh codespace ports visibility 4096:public` で公開した Codespaces公開URL（`https://<codespace>-4096.app.github.dev`）経由でアクセスします。
+- `/api/*` は `api/` 配下のVercel Functionsで処理されます（`server.js` はローカル実行用です）
+- Vercel上でも「OpenCode起動」は動作します。関数はステートレスのため状態は保持しませんが、起動は REST API（1回のPOST）で完結し、状態はCodespaces側のstateを毎回参照するため、どこから呼んでも同じ結果になります
+- opencode本体はVercelではなく**Codespace内**で起動するため、Vercelは「薄い制御面（control plane）」のままです
 
-<details>
-<summary>なぜ従来の自己ホスト方式はVercelで動作しないか</summary>
+### Vercelで排出されるリスクと対策
 
-- **技術的な理由**: Vercel Functionsはステートレスなサーバーレス実行環境（microVM・Read-only FS・`/tmp`上限・Hobby最大300s/Pro最大800s）で、長時間動作するHTTPサーバー・SSHトンネル・固定公開ポートの`0.0.0.0`バインド・永続キャッシュを保持できません。
-- **ポリシー上の理由**: VercelのAcceptable Use Policyは長期の接続を中継するプロキシ／トンネル用途（"proxy", "act as a VPN", "undue burden"）やHobbyプランの商用利用を禁止しており、本アプリの現行運転形態（リモート開発環境へのトンネル・プロキシ配信）は許容されません。
-
-**ただし、アーキテクチャを変えれば「薄い制御面（control plane）のホスティング」としてはVercelで成立させられます。** Vercelにはプロキシを張らず、以下の役割だけを持たせます。
-
-1. **Vercel = 制御面のみ（ステートレス）**: 静的フロントエンド＋`fetch`によるGitHub Codespaces REST API（一覧・作成・起動・停止・削除）への呼び出しだけを行い、プロキシ・トンネル・バイナリ転送は行いません（AUP違反にならず、実行時間も数秒に収まります）。
-2. **実際の`opencode serve`はCodespace内で self-host する**: 対象リポジトリに`.devcontainer/`を用意し、`forwardPorts`＋`portsAttributes`でポート4096を転送し、`onCreateCommand`/`postStartCommand`でopencodeを取得・起動します。`opencode serve`がHTTPS未対応のため、必要に応じてCodespace内でTLS終端するか、`--hostname 0.0.0.0`でHTTPのまま公開します。
-3. **公開URLはCodespacesの標準形式 `https://<codespace>-<port>.app.github.dev`**: Codespacesインフラがステートレス制御面の代わりに公開リレーを持ちます。`gh codespace ports`で一覧・`gh codespace ports visibility <port>:public`で公開設定が可能です。公開局面では認証をopencodeのBasic認証（`OPENCODE_SERVER_USERNAME`/`OPENCODE_SERVER_PASSWORD`）で行います。
-4. **成果物をVercelから直接 exec する場合**: どうしてもVercel関数からSSHでCodespaceへコマンドを投げるなら、`gh`/`ssh`を**Large functions（上限5GB・`includeFiles`）に同梱**し、Vercelの自由なアウトバウンド（port 22も可）を使って起動だけ投げ、即返す形なら技術的には可能です（ただし同梱分のデプロイサイズ増と要検証）。
-
-未検証の注意点として、**ヘッドレス（API/CLIで作成しエディタ未接続）のCodespaceでは`*.app.github.dev`のポート転送エージェントが未初期化で、ポートが公開されない可能性があります。** その場合は（a）`.devcontainer`で`forwardPorts`を宣言して公開する、または（b）Codespace内で逆トンネルを張る、のどちらかで回避します。実際にデプロイする前に、小さいdevcontainerでこの動作確認を行うのが安全です。
-
-</details>
-
-現行のローカル実行方式は引き続き`node server.js`で利用できます。公開時はTLS・アクセス制御を追加してください。
+従来の「Vercel関数がSSHトンネルを張ってopencodeを配信する」方式は、Vercelの実行時間制限（Hobby最大300s）とAcceptable Use Policy（長期接続のプロキシ用途の禁止）から成立しません。本方式はVercelにプロキシ・トンネルを張らず、公開リレーはGitHub Codespacesのポート転送インフラ（`*.app.github.dev`）に委ねています。
 
 ## 必要環境（サーバー側）
 
-- Node.js 18以上
-- GitHub CLI（`gh`）。未導入なら以下でインストールしてください。
-
-```powershell
-winget install --id GitHub.cli -e --scope user
-```
-
-- `gh` は`winget`のLinks/Packagesフォルダから自動検出します（`GH_PATH`環境変数でも指定可能）。
+- Node.js 18以上（fetch利用のため）。`gh` CLIは不要になりました
 
 ## 注意点
 
-- Codespacesの「公開ポートURL（`https://<codespace>-<port>.app.github.dev`）」は、ヘッドレス（API/CLIで作成しエディタ未接続）のCodespaceでは転送エージェント未初期化のため表示できない場合があります。現行のKozmik Cloud Dashboardはそれを避けるため、SSHトンネル経由のURL（LAN内）を表示します。Vercel化する場合、このヘッドレス条件でポートが公開されるかを先に小さいdevcontainerで検証してください。
-- OpenCode serveのパスワード（`OPENCODE_SERVER_PASSWORD`）は未設定なら毎回ランダム生成され、レスポンスに含めます。
-- 認証情報（GITHUB/PAT）はサーバー側でのみ保持し、ブラウザには返しません。
+- Codespacesの公開URL（`https://<codespace>-4096.app.github.dev`）は、ポートが**privateの場合はGitHubログイン済みブラウザのみ**、**public設定後は誰でも**アクセスできます。publicにする場合は必ずopencodeにBasic認証（`OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD`）を設定してください
+- `.devcontainer` の変更（`forwardPorts` / `portsAttributes` / `postStartCommand` など）は **Rebuild Container** で初めて反映されます
+- `opencode` 本体は公式インストーラ（https://opencode.ai/install）から最新版（`anomalyco/opencode`）を自動取得します
+- 認証情報（GITHUB/PAT）はサーバー側でのみ保持し、ブラウザには返しません
 
 実装済みのCodespacesアダプターはPersonal access tokenを使って以下を行います。
 
-1. Codespaces APIで対象環境を特定し、停止中なら自動起動
-2. `gh codespace ssh`で対象環境へ接続（opencodeバイナリは初回のみSSH経由で転送）
-3. `OPENCODE_API_KEY` と強力なパスワードを環境変数へ渡して `opencode serve` を起動
-4. `gh codespace ssh -L`でトンネルを張り、環境ごとの固定専用ポートでLAN公開URLを生成
-5. URL・ユーザー名・パスワードを画面に表示（各カードで個別コピー可能）
+1. Codespaces APIで対象環境を特定し、停止中なら `POST /user/codespaces/{name}/start` で非同期起動
+2. `GET /user/codespaces/{name}` の state をポーリングし、Runningなら `https://<codespace>-4096.app.github.dev` を公開URLとして返却
+3. URLはカード上で「開く ↗」「URLをコピー」として表示（起動待ち中は「起動中…」、失敗時はエラー表示）
 
-`gh` CLIがサーバー上に必要です。OpenCode起動は現在GitHub Codespacesに対応しています（Ona Cloudは一覧・削除のみ）。公開URLとパスワードはLAN内の本人利用を想定しており、パブリック公開する場合は追加のTLS・アクセス制御を必ず検討してください。
+OpenCode起動は現在GitHub Codespacesに対応しています（Ona Cloudは一覧・削除のみ）。公開URLへのアクセス可否はCodespace側のポート可視性設定（private/public）に依存するため、上記「ポート公開（public）について」を確認してください。

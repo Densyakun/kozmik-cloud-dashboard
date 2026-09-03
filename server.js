@@ -1,276 +1,40 @@
 import http from 'node:http';
-import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
 import crypto from 'node:crypto';
-import os from 'node:os';
-import net from 'node:net';
 
-const exec = promisify(execFile);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const tunnels = new Map();
-const serveStates = new Map();
 
-const OPENCODE_RELEASE_URL = 'https://github.com/sst/opencode/releases/latest/download/opencode-linux-x64.tar.gz';
+// opencode は Codespace 側（.devcontainer の postStartCommand）でポート4096に常駐させる。
+// ダッシュボードは GitHub REST API で起動/状態確認だけを行い、公開URLを表示する。
+const OPENCODE_PORT = 4096;
+const OPENCODE_APP_GITHUB_DEV = '.app.github.dev';
 
-async function ensureLocalOpenCodeTgz() {
-  const cacheDir = path.join(root, '.opencode-cache');
-  const tgz = path.join(cacheDir, 'opencode.tgz');
-  if (existsSync(tgz) && statSync(tgz).size > 50 * 1024 * 1024) return tgz;
-  await mkdir(cacheDir, { recursive: true });
-  const res = await fetch(OPENCODE_RELEASE_URL);
-  if (!res.ok) throw new Error(`opencodeのダウンロードに失敗しました(HTTP ${res.status})`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  await writeFile(tgz, buf);
-  if (!existsSync(tgz) || statSync(tgz).size < 50 * 1024 * 1024) throw new Error('opencodeのダウンロードに失敗しました');
-  return tgz;
+function codespaceForwardUrl(name) {
+  return `https://${name}-${OPENCODE_PORT}${OPENCODE_APP_GITHUB_DEV}`;
 }
 
-function pipeFileToRemote(ghPath, environmentId, localFile, remotePath) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(ghPath, ['codespace', 'ssh', '--codespace', environmentId, '--', 'cat', '>', remotePath, '&&', 'echo', 'TRANSFER_DONE'], {
-      env: { ...process.env, GH_TOKEN: env.GITHUB_CODESPACES_TOKEN },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let out = '';
-    child.stdout.on('data', (d) => out += d.toString());
-    child.stderr.on('data', (d) => out += d.toString());
-    const reader = createReadStream(localFile);
-    reader.pipe(child.stdin);
-    child.stdin.on('error', () => {});
-    const timer = setTimeout(() => { try { child.kill(); } catch { /* ignore */ } reject(new Error('バイナリ転送がタイムアウトしました')); }, 600000);
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      if (code === 0 && /TRANSFER_DONE/.test(out)) { reader.close(); resolve(); }
-      else reject(new Error(`バイナリ転送に失敗しました(exit ${code})`));
-    });
-  });
+// GitHub Codespaces の state をダッシュボード用の分類に変換する
+function describeCodespaceState(state) {
+  const st = String(state || '').toLowerCase();
+  if (/avail|run|active/.test(st)) return { kind: 'running' };
+  if (/start|provisio|created|queue|prepar|boot/.test(st)) return { kind: 'starting' };
+  if (/stopp|shut|archiv/.test(st)) return { kind: 'stopped' };
+  if (/fail|deleted|unknown/.test(st)) return { kind: 'failed' };
+  return { kind: 'starting' };
 }
 
-async function runOpenCodeServe(environmentId) {
-  const existingState = serveStates.get(environmentId);
-  const state = existingState || { status: 'starting', publicUrl: null, password: null, error: null, port: null, username: null, detail: null };
-  state.status = 'starting';
-  state.detail = '準備中…';
-  state.error = null;
-  state.username = env.OPENCODE_SERVER_USERNAME || 'opencode';
-  serveStates.set(environmentId, state);
-  const password = env.OPENCODE_SERVER_PASSWORD || crypto.randomBytes(12).toString('base64url');
-  if (isVercel) {
-    state.status = 'failed';
-    state.detail = null;
-    state.error = 'OpenCodeのSSHトンネル起動はVercelでは利用できません（サーバーレス関数ではSSHトンネルを保持できないため）。ローカルの node server.js でご利用ください。';
-    return;
+async function startCodespaceIfNeeded(environmentId) {
+  const codespace = await github(`/user/codespaces/${encodeURIComponent(environmentId)}`);
+  const { kind } = describeCodespaceState(codespace.state);
+  if (kind === 'stopped') {
+    // start API は非同期。完了（Running）は1〜2分後なので、フロントエンドのポーリングで状態遷移を監視する
+    await github(`/user/codespaces/${encodeURIComponent(environmentId)}/start`, { method: 'POST' });
   }
-  const ghPath = await resolveGh();
-  if (!ghPath) {
-    state.status = 'failed';
-    state.error = 'gh CLIが見つかりません。winget install --id GitHub.cli でインストールしてサーバーを再起動してください。';
-    return;
-  }
-  const ssh = (args, opts = {}) => exec(ghPath, ['codespace', 'ssh', '--codespace', environmentId, '--', ...args], { env: { ...process.env, GH_TOKEN: env.GITHUB_CODESPACES_TOKEN }, timeout: 240000, ...opts });
-  const sshRetry = async (args, opts = {}) => {
-    let last;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try { return await ssh(args, opts); } catch (e) { last = e; await sleep(4000 * (attempt + 1)); }
-    }
-    throw last;
-  };
-  try {
-    state.detail = 'Codespaceを起動中…（通常1〜2分）';
-    const tgzPromise = ensureLocalOpenCodeTgz().catch((e) => { throw e; });
-    await ensureCodespaceRunning(environmentId);
-    await sleep(2000);
-    console.error('[serve] codespace ready');
-
-    // 高速パス: 既存トンネルが生きていればそのまま再利用（serve再起動・転送なし）
-    state.detail = '既存の接続を確認中…';
-    const cachedTunnel = tunnels.get(environmentId);
-    if (cachedTunnel && cachedTunnel.child && cachedTunnel.child.exitCode === null && await probePort(cachedTunnel.port)) {
-      state.status = 'running';
-      state.detail = null;
-      state.port = cachedTunnel.port;
-      state.publicUrl = `http://${lanIp()}:${await ensureOcProxy(environmentId, cachedTunnel.port)}/`;
-      state.error = null;
-      return;
-    }
-
-    state.detail = '作業ディレクトリを準備中…';
-    await sshRetry(['mkdir', '-p', '~/.opencode-cli']);
-
-    // バイナリは既に転送済みなら転送をスキップ（初回のみ60MB転送）
-    state.detail = 'opencodeバイナリを確認中…';
-    let hasBin = false;
-    try { const r = await sshRetry(['test', '-f', '~/.opencode-cli/opencode', '&&', 'echo', 'HAS_BIN']); hasBin = /HAS_BIN/.test(r.stdout || ''); } catch { /* ignore */ }
-    if (!hasBin) {
-      state.detail = 'opencodeを準備中…';
-      let localTgz;
-      try { localTgz = await tgzPromise; }
-      catch (e) { state.status = 'failed'; state.detail = null; state.error = `opencodeの取得に失敗しました。${e.message || ''}`; return; }
-      const hadTransfer = await sshRetry(['test', '-f', '~/.opencode-cli/opencode.tgz', '&&', 'echo', 'HAS_TGZ']).then((r) => /HAS_TGZ/.test(r.stdout || '')).catch(() => false);
-      if (!hadTransfer) {
-        state.detail = 'opencodeを転送中…（初回のみ60MB・1〜2分）';
-        try { await pipeFileToRemote(ghPath, environmentId, localTgz, '~/.opencode-cli/opencode.tgz'); }
-        catch (e) { state.status = 'failed'; state.detail = null; state.error = `Codespaceへのopencode転送に失敗しました（${e.message || ''}）。`; return; }
-      }
-      state.detail = '転送したopencodeを展開中…';
-      await sshRetry(['tar', '-xzf', '~/.opencode-cli/opencode.tgz', '-C', '~/.opencode-cli']);
-      await sshRetry(['chmod', '+x', '~/.opencode-cli/opencode']);
-    }
-
-    // serveは既に起動済み(port4096)なら再起動しない
-    state.detail = '起動状態を確認中…';
-    let serving = false;
-    try { const r = await sshRetry(['ss', '-ltn', '|', 'grep', '-q', ':4096', '&&', 'echo', 'SERVING']); serving = /SERVING/.test(r.stdout || ''); } catch { /* ignore */ }
-    if (!serving) {
-      state.detail = 'opencode serveを起動中…';
-      const serveArgs = ['cd', '~/.opencode-cli', '&&', `OPENCODE_SERVER_PASSWORD=${password}`, `OPENCODE_API_KEY=${env.OPENCODE_API_KEY || ''}`, 'setsid', './opencode', 'serve', '--hostname', '0.0.0.0', '--port', '4096', '>', '/tmp/oc-serve.log', '2>&1', '</dev/null', '&'];
-      console.error('[serve] launching serve');
-      try { await sshRetry(serveArgs, { timeout: 60000 }); }
-      catch { /* backgrounding may return nonzero; proceed to tunnel */ }
-      await sleep(4000);
-    }
-
-    state.detail = 'トンネルを確立中…';
-    const port = await ensureTunnel(environmentId, ghPath);
-    console.error('[serve] tunnel done port=', port);
-    if (!port) {
-      let log = '';
-      try { const r = await ssh(['cat', '/tmp/oc-serve.log']); log = (r.stdout || '').slice(0, 800); } catch { /* ignore */ }
-      state.status = 'failed';
-      state.detail = null;
-      state.error = `SSHトンネルの確立に失敗しました。${log ? 'ログ: ' + log : '（serveログなし）'}`;
-      return;
-    }
-    state.detail = '公開URLを作成中…';
-    const proxyPort = await createOcProxy(environmentId, port);
-    state.status = 'running';
-    state.detail = null;
-    state.publicUrl = `http://${lanIp()}:${proxyPort}/`;
-    state.password = password;
-    state.username = env.OPENCODE_SERVER_USERNAME || 'opencode';
-    state.port = port;
-    state.error = null;
-  } catch (error) {
-    console.error('opencode serve error:', error.message || error);
-    state.status = 'failed';
-    state.detail = null;
-    state.error = error.message || String(error);
-  }
+  return codespace;
 }
-
-function lanIp() {
-  const interfaces = os.networkInterfaces();
-  for (const list of Object.values(interfaces)) {
-    for (const item of list || []) {
-      if (item.family === 'IPv4' && !item.internal) {
-        const a = item.address.split('.').map(Number);
-        const isPrivate = a[0] === 10 || (a[0] === 192 && a[1] === 168) || (a[0] === 172 && a[1] >= 16 && a[1] <= 31);
-        if (isPrivate) return item.address;
-      }
-    }
-  }
-  return '127.0.0.1';
-}
-
-function getFreePort() {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); });
-    server.on('error', () => resolve(0));
-  });
-}
-
-async function probePort(port) {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
-    const res = await fetch(`http://127.0.0.1:${port}/v1/models`, { signal: controller.signal });
-    clearTimeout(timer);
-    return true;
-  } catch { return false; }
-}
-
-async function findGhFiles(dir) {
-  const found = [];
-  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      found.push(...await findGhFiles(full));
-    } else if (entry.name.toLowerCase() === 'gh.exe') {
-      found.push(full);
-    }
-  }
-  return found;
-}
-
-async function resolveGh() {
-  const candidates = [];
-  if (process.env.GH_PATH) candidates.push(process.env.GH_PATH);
-  if (process.env.LOCALAPPDATA) {
-    candidates.push(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links', 'gh.exe'));
-    try {
-      const ghExes = await findGhFiles(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages'));
-      candidates.push(...ghExes);
-    } catch { /* ignore */ }
-  }
-  for (const candidate of candidates) { if (candidate && existsSync(candidate)) return candidate; }
-  try { const result = await exec('where', ['gh.exe']); if (result.stdout) return result.stdout.trim().split(/\r?\n/)[0]; } catch { /* not on PATH */ }
-  return null;
-}
-
-async function ensureCodespaceRunning(name) {
-  const isReady = (s) => /avail|run|active/i.test(s);
-  const isStopped = (s) => /shutdown|stopped|archived/i.test(s);
-  for (let attempt = 0; attempt < 3; attempt++) {
-    let status = await github(`/user/codespaces/${encodeURIComponent(name)}`);
-    let st = (status.state || '').toLowerCase();
-    if (isReady(st)) return status;
-    if (/fail|deleted/i.test(st)) throw new Error(`Codespaceが不正な状態です(state: ${status.state})`);
-    if (isStopped(st)) await github(`/user/codespaces/${encodeURIComponent(name)}/start`, { method: 'POST' });
-    for (let i = 0; i < 30; i++) {
-      await sleep(3000);
-      status = await github(`/user/codespaces/${encodeURIComponent(name)}`);
-      st = (status.state || '').toLowerCase();
-      if (isReady(st)) return status;
-      if (/fail|deleted/i.test(st)) throw new Error(`Codespaceの起動に失敗しました(state: ${status.state})`);
-      if (isStopped(st)) break;
-    }
-  }
-  throw new Error('Codespaceがタイムアウトで起動しませんでした');
-}
-
-async function ensureTunnel(environmentName, ghPath) {
-  const existing = tunnels.get(environmentName);
-  if (existing && existing.child && existing.child.exitCode === null && await probePort(existing.port)) return existing.port;
-  if (existing && existing.child) { try { existing.child.kill(); } catch { /* ignore */ } }
-  const port = await getFreePort();
-  if (!port) return null;
-  const child = spawn(ghPath, ['codespace', 'ssh', '--codespace', environmentName, '--', '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=12', '-N', '-L', `${port}:localhost:4096`], {
-    env: { ...process.env, GH_TOKEN: env.GITHUB_CODESPACES_TOKEN },
-    stdio: 'ignore',
-    detached: false,
-  });
-  tunnels.set(environmentName, { child, port });
-  child.on('exit', () => { if (tunnels.get(environmentName)?.child === child) tunnels.delete(environmentName); });
-  for (let i = 0; i < 30; i++) {
-    await sleep(1500);
-    if (await probePort(port)) return port;
-    if (child.exitCode !== null) break;
-  }
-  try { child.kill(); } catch { /* ignore */ }
-  tunnels.delete(environmentName);
-  return null;
-}
-
-process.on('exit', () => {
-  for (const { child } of tunnels.values()) { try { child.kill(); } catch { /* ignore */ } }
-  for (const { server } of ocProxies.values()) { try { server.close(); } catch { /* ignore */ } }
-});
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const envPath = path.join(root, '.env.local');
@@ -284,15 +48,13 @@ if (existsSync(envPath)) {
 }
 Object.assign(env, process.env);
 
-// Vercelのサーバーレスランタイムでは process.env.VERCEL が設定される。
-// ステートレスな関数ではSSHトンネル・固定公開ポートを保持できないため、
-// opencode serveの起動は無効化し、案内メッセージを返す。
 const isVercel = Boolean(process.env.VERCEL);
 
 const serverPort = Number(env.PORT || 3000);
 const providers = {
   codespaces: Boolean(env.GITHUB_CODESPACES_TOKEN),
   ona: Boolean(env.ONA_PERSONAL_ACCESS_TOKEN),
+  // opencode は Codespace 内で自己ホストするためダッシュボード側の設定は任意
   opencode: Boolean(env.OPENCODE_API_KEY),
 };
 const dashboardPassword = env.DASHBOARD_PASSWORD || env.KOZMIK_DASHBOARD_PASSWORD || '';
@@ -373,88 +135,19 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-const ocProxies = new Map(); // envId -> { server, port }
-
-function closeOcProxy(environmentId) {
-  const entry = ocProxies.get(environmentId);
-  if (entry && entry.server) { try { entry.server.close(); } catch { /* ignore */ } }
-  ocProxies.delete(environmentId);
-}
-
-function ocProxyPortFor(environmentId) {
-  let h = 0;
-  for (let i = 0; i < environmentId.length; i++) h = (h * 31 + environmentId.charCodeAt(i)) >>> 0;
-  return 41000 + (h % 10000);
-}
-
-function createOcProxy(environmentId, tunnelPort) {
-  const basePort = ocProxyPortFor(environmentId);
-  const tryListen = (port) => new Promise((resolve, reject) => {
-    const httpServer = http.createServer((req, res) => {
-      const hdrs = { ...req.headers, host: `127.0.0.1:${tunnelPort}` };
-      delete hdrs['accept-encoding'];
-      const upstream = http.request({ host: '127.0.0.1', port: tunnelPort, path: req.url, method: req.method, headers: hdrs });
-      upstream.on('response', (upstreamResponse) => { res.writeHead(upstreamResponse.statusCode, upstreamResponse.headers); upstreamResponse.pipe(res); });
-      upstream.on('error', () => { if (!res.headersSent) json(res, 502, { error: 'proxy error' }); else res.end(); });
-      req.pipe(upstream);
-    });
-    httpServer.on('upgrade', (req, socket, head) => {
-      const up = net.connect(tunnelPort, '127.0.0.1', () => {
-        let raw = `${req.method} ${req.url} HTTP/1.1\r\n`;
-        for (let i = 0; i < req.rawHeaders.length; i += 2) raw += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
-        up.write(raw + '\r\n');
-        if (head && head.length) up.write(head);
-      });
-      socket.on('error', () => up.destroy());
-      up.on('error', () => socket.destroy());
-      req.on('error', () => {});
-      up.pipe(socket);
-      socket.pipe(up);
-    });
-    httpServer.on('error', (err) => reject(err));
-    httpServer.listen(port, '0.0.0.0', () => {
-      ocProxies.set(environmentId, { server: httpServer, port, targetPort: tunnelPort });
-      resolve(port);
-    });
-  });
-  return (async () => {
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const candidate = basePort + attempt > 59999 ? basePort + attempt - 10000 : basePort + attempt;
-      try { return await tryListen(candidate); } catch (e) { if (e.code !== 'EADDRINUSE') throw e; }
-    }
-    return new Promise((resolve, reject) => {
-      const s = http.createServer((req, res) => {
-        const hdrs = { ...req.headers, host: `127.0.0.1:${tunnelPort}` };
-        delete hdrs['accept-encoding'];
-        const up = http.request({ host: '127.0.0.1', port: tunnelPort, path: req.url, method: req.method, headers: hdrs });
-        up.on('response', (ur) => { res.writeHead(ur.statusCode, ur.headers); ur.pipe(res); });
-        up.on('error', () => { if (!res.headersSent) json(res, 502, { error: 'proxy error' }); else res.end(); });
-        req.pipe(up);
-      });
-      s.on('upgrade', (req, socket, head) => {
-        const up = net.connect(tunnelPort, '127.0.0.1', () => {
-          let raw = `${req.method} ${req.url} HTTP/1.1\r\n`;
-          for (let i = 0; i < req.rawHeaders.length; i += 2) raw += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
-          up.write(raw + '\r\n');
-          if (head && head.length) up.write(head);
-        });
-        socket.on('error', () => up.destroy());
-        up.on('error', () => socket.destroy());
-        up.pipe(socket); socket.pipe(up);
-      });
-      s.listen(0, '0.0.0.0', () => { const p = s.address().port; ocProxies.set(environmentId, { server: s, port: p, targetPort: tunnelPort }); resolve(p); });
-      s.on('error', reject);
-    });
-  })();
-}
-
-function ensureOcProxy(environmentId, tunnelPort) {
-  const existing = ocProxies.get(environmentId);
-  if (existing && existing.server && existing.port && existing.targetPort === tunnelPort) {
-    try { if (existing.server.listening) return Promise.resolve(existing.port); } catch { /* ignore */ }
+async function codespaceStatusEntry(environmentId) {
+  try {
+    const codespace = await github(`/user/codespaces/${encodeURIComponent(environmentId)}`);
+    const { kind } = describeCodespaceState(codespace.state);
+    const base = { environmentId, name: codespace.display_name || codespace.name || environmentId, codespaceState: codespace.state };
+    const publicUrl = codespaceForwardUrl(environmentId);
+    if (kind === 'running') return { ...base, state: 'running', publicUrl };
+    if (kind === 'starting') return { ...base, state: 'starting', detail: 'Codespaceを起動しています…（通常1〜2分）', publicUrl };
+    if (kind === 'stopped') return { ...base, state: 'stopped' };
+    return { ...base, state: 'failed', error: `Codespaceが不正な状態です（state: ${codespace.state}）` };
+  } catch {
+    return { environmentId, state: 'failed', error: 'Codespaceの状態を取得できませんでした。トークンの権限と有効期限を確認してください。', codespaceState: null };
   }
-  closeOcProxy(environmentId);
-  return createOcProxy(environmentId, tunnelPort);
 }
 
 const server = http.createServer(async (request, response) => {
@@ -568,7 +261,22 @@ const server = http.createServer(async (request, response) => {
   if (actionMatch && request.method === 'POST') {
     const [, provider, rawId, action] = actionMatch;
     if (provider !== 'github' || !providers.codespaces) return json(response, 400, { message: 'この操作は現在GitHub Codespacesで利用できます。' });
-    try { const data = await github(`/user/codespaces/${encodeURIComponent(rawId)}/${action}`, { method: 'POST' }); return json(response, 200, data || { ok: true }); } catch { return json(response, 502, { message: 'Codespaces APIで操作できませんでした。' }); }
+    try {
+      const data = await github(`/user/codespaces/${encodeURIComponent(rawId)}/${action}`, { method: 'POST' });
+      return json(response, 200, data || { ok: true });
+    } catch (error) {
+      const reason = error.message || '';
+      if (action === 'stop') {
+        // 起動中は停止APIが拒否される場合がある。現在の状態を確認して案内する
+        try {
+          const codespace = await github(`/user/codespaces/${encodeURIComponent(rawId)}`);
+          const { kind } = describeCodespaceState(codespace.state);
+          if (kind === 'stopped') return json(response, 200, { ok: true, state: codespace.state });
+          if (kind === 'starting') return json(response, 409, { message: 'Codespaceが起動中です。起動完了（Running）後に停止してください。', state: codespace.state });
+        } catch { /* 状態取得できなければ通常のエラーとして返す */ }
+      }
+      return json(response, 502, { message: `Codespaces APIで操作できませんでした。${reason}` });
+    }
   }
   const deleteMatch = url.pathname.match(/^\/api\/environments\/(github|ona)\/([^/]+)$/);
   if (deleteMatch && request.method === 'DELETE') {
@@ -577,11 +285,6 @@ const server = http.createServer(async (request, response) => {
       if (!providers.codespaces) return json(response, 400, { message: 'GITHUB_CODESPACES_TOKEN が設定されていません。' });
       try {
         await github(`/user/codespaces/${encodeURIComponent(rawId)}`, { method: 'DELETE' });
-        const tunnel = tunnels.get(rawId);
-        if (tunnel && tunnel.child) { try { tunnel.child.kill(); } catch { /* ignore */ } }
-        tunnels.delete(rawId);
-        closeOcProxy(rawId);
-        serveStates.delete(rawId);
         return json(response, 200, { ok: true });
       } catch { return json(response, 502, { message: 'Codespacesの削除に失敗しました。' }); }
     }
@@ -589,8 +292,6 @@ const server = http.createServer(async (request, response) => {
       if (!providers.ona) return json(response, 400, { message: 'ONA_PERSONAL_ACCESS_TOKEN が設定されていません。' });
       try {
         await onaApi('EnvironmentService/DeleteEnvironment', { environmentId: rawId });
-        closeOcProxy(rawId);
-        serveStates.delete(rawId);
         return json(response, 200, { ok: true });
       } catch (error) {
         console.error('ona delete error:', error.message);
@@ -599,65 +300,27 @@ const server = http.createServer(async (request, response) => {
     }
   }
   if (url.pathname === '/api/opencode/serve' && request.method === 'POST') {
-    const body = await readBody(request);
     if (!providers.codespaces) return json(response, 400, { message: 'GitHub CodespacesのPersonal access tokenを設定してください。' });
-    if (!body.environmentId) return json(response, 400, { message: '起動対象の環境が指定されていません。' });
-    if (isVercel) {
-      return json(response, 501, {
-        code: 'not_available_on_vercel',
-        message: 'OpenCodeのSSHトンネル起動はVercelでは利用できません。Vercelの関数はステートレスなため、SSHトンネルや固定公開ポートを保持できません。完全な機能はローカルの node server.js で利用するか、対象リポジトリの .devcontainer に forwardPorts と opencode 起動を設定し、Codespaces の公開URL（https://<codespace>-4096.app.github.dev）をご利用ください。',
-      });
+    const body = await readBody(request);
+    const environmentId = String(body.environmentId || '');
+    if (!environmentId) return json(response, 400, { message: '起動対象の環境が指定されていません。' });
+    try {
+      // CodespaceをREST APIで起動（非同期。opencode自体はCodespace内のdevcontainerで常駐起動済み）
+      const codespace = await startCodespaceIfNeeded(environmentId);
+      const { kind } = describeCodespaceState(codespace.state);
+      const publicUrl = codespaceForwardUrl(environmentId);
+      if (kind === 'running') return json(response, 200, { status: 'running', environmentId, publicUrl, codespaceState: codespace.state });
+      if (kind === 'failed') return json(response, 409, { status: 'failed', environmentId, codespaceState: codespace.state, message: 'Codespaceが利用できない状態です。環境の削除や再作成を検討してください。' });
+      return json(response, 202, { status: 'starting', environmentId, publicUrl, codespaceState: codespace.state, detail: 'Codespaceを起動しています…（通常1〜2分）' });
+    } catch (error) {
+      console.error('opencode serve error:', error.message || error);
+      return json(response, 502, { message: `OpenCodeを起動できませんでした。${error.message || ''}` });
     }
-    if (serveStates.get(body.environmentId)?.status === 'starting' || serveStates.get(body.environmentId)?.status === 'running') {
-      return json(response, 200, { status: serveStates.get(body.environmentId).status });
-    }
-    runOpenCodeServe(body.environmentId);
-    return json(response, 202, { status: 'starting' });
   }
   if (url.pathname === '/api/opencode/status' && request.method === 'GET') {
-    if (isVercel) return json(response, 200, { states: [], vercel: true, message: 'OpenCodeトンネルはVercelでは提供されません。' });
-    if (providers.codespaces) {
-      for (const [environmentId, state] of serveStates) {
-        if (state.status !== 'running' || !state.port) continue;
-        if (!await probePort(state.port)) {
-          const code = await github(`/user/codespaces/${encodeURIComponent(environmentId)}`).catch(() => null);
-          const csState = (code?.state || '').toLowerCase();
-          const ready = /avail|run|active|start|provision/i.test(csState);
-          if (!ready) {
-            const tunnel = tunnels.get(environmentId);
-            if (tunnel && tunnel.child) { try { tunnel.child.kill(); } catch { /* ignore */ } }
-            tunnels.delete(environmentId);
-            closeOcProxy(environmentId);
-            state.status = 'stopped';
-            state.publicUrl = null;
-            state.error = `Codespaceが停止しました（state: ${code?.state || '不明'}）。再起動してください。`;
-          } else {
-            // Codespaceは稼働中なのにトンネルが切れた → トンネルを張り直して復旧を試みる
-            const ghPath = await resolveGh();
-            const newPort = ghPath ? await ensureTunnel(environmentId, ghPath) : null;
-            if (newPort) {
-              state.port = newPort;
-              state.status = 'running';
-              closeOcProxy(environmentId);
-              const proxyPort = await createOcProxy(environmentId, newPort);
-              state.publicUrl = `http://${lanIp()}:${proxyPort}/`;
-              state.error = null;
-            } else {
-              closeOcProxy(environmentId);
-              state.status = 'stopped';
-              state.publicUrl = null;
-              state.error = 'OpenCodeの接続が切れました（トンネル停止）。再起動してください。';
-            }
-          }
-        }
-      }
-    }
-    const list = [];
-    for (const [environmentId, state] of serveStates) {
-      const code = await github(`/user/codespaces/${encodeURIComponent(environmentId)}`).catch(() => null);
-      list.push({ environmentId, name: code?.display_name || code?.name || environmentId, state: state.status, publicUrl: state.publicUrl || null, password: state.password || null, username: state.username || env.OPENCODE_SERVER_USERNAME || 'opencode', detail: state.detail || null, error: state.error || null, codespaceState: code?.state || null });
-    }
-    return json(response, 200, { states: list });
+    const ids = (url.searchParams.get('ids') || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const states = await Promise.all(ids.map(codespaceStatusEntry));
+    return json(response, 200, { states, vercel: isVercel });
   }
   let file = url.pathname === '/' ? '/index.html' : url.pathname;
   const filePath = path.join(root, 'public', path.normalize(file));

@@ -1,7 +1,6 @@
 const toast = document.querySelector('#toast');
 function notify(message) { toast.textContent = message; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); }
 let isVercel = false;
-const OPENCODE_LIMIT_TITLE = 'このVercelデプロイはサーバーレス（ステートレス）のため、SSHトンネルや固定公開ポートを保持できません。完全な機能はローカルで npm start（gh CLI必須）で利用するか、対象リポジトリの .devcontainer に forwardPorts と opencode 起動を設定し、Codespaces の公開URL（https://<codespace>-4096.app.github.dev）をご利用ください。';
 fetch('/api/auth/check').then(r=>r.json()).then(d=>{ if(d.required && !d.authenticated) location.href='/login.html'; }).catch(()=>{});
 document.querySelector('#logoutBtn')?.addEventListener('click', async ()=>{ await fetch('/api/logout',{method:'POST'}); location.href='/login.html'; });
 const origFetch = window.fetch;
@@ -121,28 +120,33 @@ document.querySelector('#confirmDelete').addEventListener('click', async () => {
   } catch { notify('サーバーに接続できません'); }
   finally { button.disabled = false; button.textContent = '削除する'; }
 });
+function renderOpenCodeBadge(badge, state) {
+  if (!badge) return;
+  badge.className = `opencode-status os-${state.state}`;
+  if (state.state === 'running') {
+    badge.innerHTML = `<span class="os-badge running">● 稼働中</span><a class="os-url" href="${state.publicUrl}" target="_blank" rel="noopener">開く ↗</a><span class="os-copy-row"><button type="button" class="os-copy" data-copy="url" data-url="${state.publicUrl}">URLをコピー</button></span>`;
+  } else if (state.state === 'starting') {
+    badge.innerHTML = `<span class="os-badge starting">◐ 起動中…</span><span class="os-detail">${state.detail || '準備中…'}</span>`;
+  } else if (state.state === 'stopped') {
+    badge.innerHTML = `<span class="os-badge stopped">● 停止</span>`;
+  } else if (state.state === 'failed') {
+    badge.innerHTML = `<span class="os-badge failed">● 失敗</span><span class="os-error">${state.error || ''}</span>`;
+  }
+}
 async function launchOpenCode(environmentId) {
   if (!environmentId) return notify('起動対象の環境がありません');
   const badge = document.querySelector(`.opencode-status[data-env="${environmentId}"]`);
   if (badge) { badge.className = `opencode-status os-starting`; badge.innerHTML = `<span class="os-badge starting">◐ 起動中…</span><span class="os-detail">リクエスト送信中…</span>`; }
   try {
     const result = await fetch('/api/opencode/serve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ environmentId }) });
-    let data = {};
-    try { data = await result.json(); } catch { data = {}; }
-    if (data.code === 'not_available_on_vercel') {
-      if (badge) {
-        badge.className = `opencode-status os-failed`;
-        badge.innerHTML = `<span class="os-badge failed">● 利用不可</span><span class="os-error">VercelではOpenCodeのSSHトンネル起動を利用できません。READMEの案内を参照してください。</span>`;
-      }
-      notify('VercelではOpenCode起動を利用できません');
-      return;
-    }
-    if (result.ok) notify(data.status === 'running' ? 'OpenCodeは既に起動しています' : 'OpenCode serve を起動しています（転送含め数分かかります）...');
-    else {
-      if (badge) {
-        badge.className = `opencode-status os-failed`;
-        badge.innerHTML = `<span class="os-badge failed">● 失敗</span><span class="os-error">${data.message || 'OpenCodeを起動できません'}</span>`;
-      }
+    const data = await result.json().catch(() => ({}));
+    if (result.ok) {
+      notify(data.status === 'running' ? 'OpenCodeは既に起動しています' : 'Codespaceを起動しています（通常1〜2分）...');
+      if (data.status === 'running') renderOpenCodeBadge(badge, { state: 'running', publicUrl: data.publicUrl });
+      else if (badge) badge.innerHTML = `<span class="os-badge starting">◐ 起動中…</span><span class="os-detail">${data.detail || '準備中…'}</span>`;
+      pollServeStatus();
+    } else {
+      if (badge) badge.innerHTML = `<span class="os-badge failed">● 失敗</span><span class="os-error">${data.message || 'OpenCodeを起動できません'}</span>`;
       notify(data.message || 'OpenCodeを起動できません');
     }
   } catch { notify('サーバーに接続できません'); }
@@ -151,27 +155,16 @@ async function launchOpenCode(environmentId) {
 const serveCheckNote = document.querySelector('#serveCheckNote');
 let serveStatusPolled = false;
 async function pollServeStatus() {
+  const badges = [...document.querySelectorAll('.opencode-status[data-env]')];
+  const ids = badges.map((b) => b.dataset.env).filter(Boolean);
+  if (!ids.length) { serveCheckNote.hidden = true; return; }
   if (!serveStatusPolled) serveCheckNote.hidden = false;
   try {
-    const result = await fetch('/api/opencode/status');
+    const result = await fetch(`/api/opencode/status?ids=${encodeURIComponent(ids.join(','))}`);
     const data = await result.json();
     if (data.vercel) isVercel = true;
     const known = new Set((data.states || []).map((s) => s.environmentId));
-    (data.states || []).forEach((state) => {
-      const badge = document.querySelector(`.opencode-status[data-env="${state.environmentId}"]`);
-      if (!badge) return;
-      badge.className = `opencode-status os-${state.state}`;
-      badge.dataset.env = state.environmentId;
-      if (state.state === 'running') {
-        badge.innerHTML = `<span class="os-badge running">● 稼働中</span><a class="os-url" href="${state.publicUrl}" target="_blank" rel="noopener">開く ↗</a><span class="os-pw">ユーザー名: <code>${state.username || 'opencode'}</code> パスワード: <code>${state.password}</code></span><span class="os-copy-row"><button type="button" class="os-copy" data-copy="url" data-url="${state.publicUrl}">URLをコピー</button><button type="button" class="os-copy" data-copy="pw" data-pw="${state.password}">パスワードをコピー</button></span>`;
-      } else if (state.state === 'starting') {
-        badge.innerHTML = `<span class="os-badge starting">◐ 起動中…</span><span class="os-detail">${state.detail || '準備中…'}</span>`;
-      } else if (state.state === 'stopped') {
-        badge.innerHTML = `<span class="os-badge stopped">● 停止</span>`;
-      } else if (state.state === 'failed') {
-        badge.innerHTML = `<span class="os-badge failed">● 失敗</span><span class="os-error">${state.error || ''}</span>`;
-      }
-    });
+    (data.states || []).forEach((state) => renderOpenCodeBadge(document.querySelector(`.opencode-status[data-env="${state.environmentId}"]`), state));
     if (serveStatusPolled) {
       document.querySelectorAll('.opencode-status[data-env]').forEach((badge) => {
         if (!known.has(badge.dataset.env)) {
@@ -194,7 +187,6 @@ document.querySelector('#environmentList').addEventListener('click', (event) => 
   if (navigator.clipboard) { navigator.clipboard.writeText(text).then(() => notify(label)).catch(() => notify('コピーに失敗しました')); }
   else { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); notify(label); }
 });
-document.querySelector('#copyServe').addEventListener('click', () => { const url = document.querySelector('#serveUrl').textContent; if (navigator.clipboard && url !== '—') { navigator.clipboard.writeText(url).then(() => notify('URLをコピーしました')); } });
 document.querySelectorAll('.filter').forEach((filter) => filter.addEventListener('click', () => { document.querySelectorAll('.filter').forEach((item) => item.classList.remove('active')); filter.classList.add('active'); const mode = filter.textContent.toLowerCase(); document.querySelectorAll('.environment-card').forEach((card) => { card.style.display = mode === 'all' || (mode === 'running' && card.classList.contains('running')) || (mode === 'paused' && card.classList.contains('paused')) ? '' : 'none'; }); }));
 document.querySelector('#refreshEnv').addEventListener('click', loadConnectedEnvironments);
 
@@ -211,7 +203,6 @@ async function loadConnectedEnvironments() {
     const missing = [];
     if (!config.configured.codespaces) missing.push('GITHUB_CODESPACES_TOKEN');
     if (!config.configured.ona) missing.push('ONA_PERSONAL_ACCESS_TOKEN');
-    if (!config.configured.opencode && !isVercel) missing.push('OPENCODE_API_KEY');
     const alert = document.querySelector('#configAlert');
     if (missing.length) {
       alert.hidden = false;
@@ -227,16 +218,13 @@ async function loadConnectedEnvironments() {
     list.innerHTML = data.environments.map((item) => {
       const running = String(item.state).toLowerCase().includes('run') || ['available', 'active'].includes(String(item.state).toLowerCase());
       const isGithub = item.providerId === 'github';
-      const opencodeCell = isGithub
-        ? (isVercel
-            ? `<div class="opencode-vercel-note" title="${OPENCODE_LIMIT_TITLE.replace(/"/g, '&quot;')}">OpenCode起動はVercelでは利用できません <span class="os-tip">ℹ</span></div>`
-            : `<div class="opencode-status" data-env="${item.id}"></div>`)
-        : '';
-      const opencodeButton = isGithub && !isVercel ? `<button class="opencode-button" data-env="${item.id}">OpenCode起動</button>` : '';
+      const opencodeCell = isGithub ? `<div class="opencode-status" data-env="${item.id}"></div>` : '';
+      const opencodeButton = isGithub ? `<button class="opencode-button" data-env="${item.id}">OpenCode起動</button>` : '';
       const stopButton = isGithub ? (running ? `<button class="stop-button" data-provider="${item.providerId}" data-env="${item.id}">停止</button>` : `<button class="start-button" data-provider="${item.providerId}" data-env="${item.id}">起動</button>`) : '';
       return `<article class="environment-card ${running ? 'running' : 'paused'}"><div class="card-top"><div class="provider-icon ${item.providerId === 'github' ? 'github' : 'ona'}">${item.providerId === 'github' ? '◖' : 'ona'}</div><div class="env-title"><h3>${item.name}</h3><div class="meta"><span class="pill ${running ? 'live' : 'pause'}">● ${running ? 'Running' : 'Paused'}</span><span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div>${opencodeCell}<div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${opencodeButton}${stopButton}<button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="${item.providerId}" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
     }).join('');
     bindEnvironmentActions();
+    pollServeStatus();
   } catch (error) {
     document.querySelector('#environmentList').innerHTML = `<div class="empty-state"><strong>読込に失敗しました</strong><span>${error instanceof Error ? error.message : 'サーバーに接続できません'}</span><div class="empty-actions"><button class="ghost-button" onclick="loadConnectedEnvironments()">再読み込み</button></div></div>`;
   } finally {
