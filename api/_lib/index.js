@@ -8,6 +8,40 @@ export function codespaceForwardUrl(name) {
   return `https://${name}-${OPENCODE_PORT}.app.github.dev`;
 }
 
+// OpenCode のBasic認証情報。Codespace内の .devcontainer と同一のデフォルトにし、環境変数で上書きできる。
+// 実運用では公開URLを知る全員がこの認証情報でログインできるため、必ず変更すること。
+export function opencodeCredentials(env = process.env) {
+  return {
+    username: env.OPENCODE_SERVER_USERNAME || 'opencode',
+    password: env.OPENCODE_SERVER_PASSWORD || 'c2691c2fefc33ee30e117c27',
+  };
+}
+
+// Codespaceの公開URLに /global/health をリクエストし、opencode が実際に応答するかを確認する。
+// 応答しない場合: healthy=false, httpCode=0 (接続不可/タイムアウト) または応答のHTTPコードを返す。
+export async function probeOpenCodeHealth(publicUrl, { env = process.env, timeoutMs = 4000 } = {}) {
+  if (!publicUrl) return { healthy: false, httpCode: 0 };
+  const { username, password } = opencodeCredentials(env);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${String(publicUrl).replace(/\/+$/, '')}/global/health`, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
+      },
+    });
+    if (!res.ok) return { healthy: false, httpCode: res.status };
+    const body = await res.json();
+    return { healthy: Boolean(body && body.healthy), version: body && body.version, httpCode: res.status };
+  } catch {
+    return { healthy: false, httpCode: 0 };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // GitHub Codespaces の state をダッシュボード用の分類に変換する
 export function describeCodespaceState(state) {
   const st = String(state || '').toLowerCase();

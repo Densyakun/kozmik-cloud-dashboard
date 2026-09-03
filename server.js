@@ -4,6 +4,7 @@ import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { opencodeCredentials, probeOpenCodeHealth } from './api/_lib/index.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -141,7 +142,24 @@ async function codespaceStatusEntry(environmentId) {
     const { kind } = describeCodespaceState(codespace.state);
     const base = { environmentId, name: codespace.display_name || codespace.name || environmentId, codespaceState: codespace.state };
     const publicUrl = codespaceForwardUrl(environmentId);
-    if (kind === 'running') return { ...base, state: 'running', publicUrl };
+    if (kind === 'running') {
+      // CodespaceはRunningでも opencode の起動が追いついていないことがあるため、公開URLへヘルスチェックする
+      const health = await probeOpenCodeHealth(publicUrl, { env });
+      const opencode = health.healthy ? 'running' : health.httpCode === 0 ? 'starting' : 'error';
+      return {
+        ...base,
+        state: 'running',
+        publicUrl,
+        auth: opencodeCredentials(env),
+        opencode,
+        version: health.version || undefined,
+        opencodeDetail: opencode === 'running'
+          ? 'opencodeが応答しています'
+          : opencode === 'starting'
+            ? 'opencodeの起動を待っています…（通常1〜2分）'
+            : `opencodeが未応答です（HTTP ${health.httpCode}）。しばらく待ってから再読み込みしてください。`,
+      };
+    }
     if (kind === 'starting') return { ...base, state: 'starting', detail: 'Codespaceを起動しています…（通常1〜2分）', publicUrl };
     if (kind === 'stopped') return { ...base, state: 'stopped' };
     return { ...base, state: 'failed', error: `Codespaceが不正な状態です（state: ${codespace.state}）` };
@@ -309,9 +327,9 @@ const server = http.createServer(async (request, response) => {
       const codespace = await startCodespaceIfNeeded(environmentId);
       const { kind } = describeCodespaceState(codespace.state);
       const publicUrl = codespaceForwardUrl(environmentId);
-      if (kind === 'running') return json(response, 200, { status: 'running', environmentId, publicUrl, codespaceState: codespace.state });
+      if (kind === 'running') return json(response, 200, { status: 'running', environmentId, publicUrl, auth: opencodeCredentials(env), codespaceState: codespace.state });
       if (kind === 'failed') return json(response, 409, { status: 'failed', environmentId, codespaceState: codespace.state, message: 'Codespaceが利用できない状態です。環境の削除や再作成を検討してください。' });
-      return json(response, 202, { status: 'starting', environmentId, publicUrl, codespaceState: codespace.state, detail: 'Codespaceを起動しています…（通常1〜2分）' });
+      return json(response, 202, { status: 'starting', environmentId, publicUrl, auth: opencodeCredentials(env), codespaceState: codespace.state, detail: 'Codespaceを起動しています…（通常1〜2分）' });
     } catch (error) {
       console.error('opencode serve error:', error.message || error);
       return json(response, 502, { message: `OpenCodeを起動できませんでした。${error.message || ''}` });

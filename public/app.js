@@ -124,7 +124,16 @@ function renderOpenCodeBadge(badge, state) {
   if (!badge) return;
   badge.className = `opencode-status os-${state.state}`;
   if (state.state === 'running') {
-    badge.innerHTML = `<span class="os-badge running">● 稼働中</span><a class="os-url" href="${state.publicUrl}" target="_blank" rel="noopener">開く ↗</a><span class="os-copy-row"><button type="button" class="os-copy" data-copy="url" data-url="${state.publicUrl}">URLをコピー</button></span>`;
+    const running = state.opencode === 'running';
+    const auth = state.auth
+      ? `<span class="os-pw">ID <code>${state.auth.username}</code></span><span class="os-copy-row"><button type="button" class="os-copy" data-copy="user" data-user="${state.auth.username}">IDをコピー</button></span><span class="os-pw">PASS <code>${state.auth.password}</code></span><span class="os-copy-row"><button type="button" class="os-copy" data-copy="pw" data-pw="${state.auth.password}">パスワードをコピー</button></span>`
+      : '';
+    const status = running
+      ? `<span class="os-badge running">● 稼働中${state.version ? ` <em style="font-style:normal;opacity:.7">v${state.version}</em>` : ''}</span>`
+      : state.opencode === 'error'
+        ? `<span class="os-badge failed">● エラー</span><span class="os-error">${state.opencodeDetail || 'opencodeが未応答です'}</span>`
+        : `<span class="os-badge checking">◐ opencode起動準備中…</span><span class="os-detail">Codespaceは起動済み。opencodeの待受開始を待っています。</span>`;
+    badge.innerHTML = `${status}<a class="os-url" href="${state.publicUrl}" target="_blank" rel="noopener">開く ↗</a><span class="os-copy-row"><button type="button" class="os-copy" data-copy="url" data-url="${state.publicUrl}">URLをコピー</button></span>${auth}`;
   } else if (state.state === 'starting') {
     badge.innerHTML = `<span class="os-badge starting">◐ 起動中…</span><span class="os-detail">${state.detail || '準備中…'}</span>`;
   } else if (state.state === 'stopped') {
@@ -182,8 +191,8 @@ pollServeStatus();
 document.querySelector('#environmentList').addEventListener('click', (event) => {
   const copy = event.target.closest('.os-copy');
   if (!copy) return;
-  const text = copy.dataset.copy === 'pw' ? copy.dataset.pw : copy.dataset.url;
-  const label = copy.dataset.copy === 'pw' ? 'パスワードをコピーしました' : 'URLをコピーしました';
+  const text = copy.dataset.copy === 'pw' ? copy.dataset.pw : copy.dataset.copy === 'user' ? copy.dataset.user : copy.dataset.url;
+  const label = copy.dataset.copy === 'pw' ? 'パスワードをコピーしました' : copy.dataset.copy === 'user' ? 'ユーザー名をコピーしました' : 'URLをコピーしました';
   if (navigator.clipboard) { navigator.clipboard.writeText(text).then(() => notify(label)).catch(() => notify('コピーに失敗しました')); }
   else { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); notify(label); }
 });

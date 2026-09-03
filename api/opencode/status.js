@@ -1,4 +1,4 @@
-import { github, isAuthenticated, describeCodespaceState, codespaceForwardUrl } from '../_lib/index.js';
+import { github, isAuthenticated, describeCodespaceState, codespaceForwardUrl, opencodeCredentials, probeOpenCodeHealth } from '../_lib/index.js';
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (!isAuthenticated(req)) return res.status(401).json({ message: '認証が必要です', code: 'unauthorized' });
@@ -11,7 +11,24 @@ export default async function handler(req, res) {
       const { kind } = describeCodespaceState(codespace.state);
       const base = { environmentId, name: codespace.display_name || codespace.name || environmentId, codespaceState: codespace.state };
       const publicUrl = codespaceForwardUrl(environmentId);
-      if (kind === 'running') return { ...base, state: 'running', publicUrl };
+      if (kind === 'running') {
+        // CodespaceはRunningでも opencode の起動が追いついていないことがあるため、公開URLへヘルスチェックする
+        const health = await probeOpenCodeHealth(publicUrl);
+        const opencode = health.healthy ? 'running' : health.httpCode === 0 ? 'starting' : 'error';
+        return {
+          ...base,
+          state: 'running',
+          publicUrl,
+          auth: opencodeCredentials(),
+          opencode,
+          version: health.version || undefined,
+          opencodeDetail: opencode === 'running'
+            ? 'opencodeが応答しています'
+            : opencode === 'starting'
+              ? 'opencodeの起動を待っています…（通常1〜2分）'
+              : `opencodeが未応答です（HTTP ${health.httpCode}）。しばらく待ってから再読み込みしてください。`,
+        };
+      }
       if (kind === 'starting') return { ...base, state: 'starting', detail: 'Codespaceを起動しています…（通常1〜2分）', publicUrl };
       if (kind === 'stopped') return { ...base, state: 'stopped' };
       return { ...base, state: 'failed', error: `Codespaceが不正な状態です（state: ${codespace.state}）` };
