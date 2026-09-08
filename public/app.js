@@ -209,3 +209,44 @@ async function loadConnectedEnvironments() {
 }
 loadConnectedEnvironments();
 setInterval(() => { if (!document.hidden) loadConnectedEnvironments(); }, 30000);
+
+// 監視中（在室）スイッチ。ON=ユーザーが監視中（自動停止しない）、OFF=不在（全セッション完了時に
+// Codespace内の監視ループが自動停止する）。状態は GitLab の presence.json に保存される。
+let presenceBusy = false;
+async function loadPresence() {
+  const toggle = document.querySelector('#presenceToggle');
+  const stateEl = document.querySelector('#presenceState');
+  const hintEl = document.querySelector('#presenceHint');
+  if (!toggle) return;
+  try {
+    const res = await fetch('/api/presence');
+    const data = await res.json().catch(() => ({}));
+    toggle.checked = data.monitoring !== false;
+    if (data.configured === false) { toggle.disabled = true; hintEl.textContent = 'GITLAB_TOKEN未設定'; }
+    else { toggle.disabled = false; hintEl.textContent = toggle.checked ? 'ON: 自動停止しない' : 'OFF: 自動停止が有効'; }
+    stateEl.textContent = toggle.checked ? '監視中' : '不在';
+  } catch {
+    toggle.disabled = true; hintEl.textContent = '取得できません';
+  }
+}
+document.querySelector('#presenceToggle')?.addEventListener('change', async (event) => {
+  const monitoring = event.target.checked;
+  if (presenceBusy) return;
+  presenceBusy = true;
+  const toggle = event.target; const stateEl = document.querySelector('#presenceState'); const hintEl = document.querySelector('#presenceHint');
+  toggle.disabled = true;
+  try {
+    const res = await fetch('/api/presence', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monitoring }) });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      stateEl.textContent = monitoring ? '監視中' : '不在';
+      hintEl.textContent = monitoring ? 'ON: 自動停止しない' : 'OFF: 自動停止が有効';
+      toggle.checked = monitoring;
+      notify(monitoring ? '監視中に設定しました' : '不在に設定しました（自動停止有効）');
+    } else {
+      toggle.checked = !monitoring; notify(data.message || '更新に失敗しました');
+    }
+  } catch { toggle.checked = !monitoring; notify('サーバーに接続できません'); }
+  finally { toggle.disabled = false; presenceBusy = false; }
+});
+loadPresence();

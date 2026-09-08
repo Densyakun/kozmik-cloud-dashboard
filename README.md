@@ -66,6 +66,24 @@ API/CLIで作成して一度もエディタを開いていないCodespaceでは�
 
 `DASHBOARD_PASSWORD` を設定すると、すべてのページ・APIがパスワード保護されます。`/login.html` でログインすると `kcd_auth` Cookie（HttpOnly, 30日）が発行され、未認証のAPIは `401 unauthorized` を返し、ページは `/login.html` にリダイレクトされます。Vercelでは環境変数 `DASHBOARD_PASSWORD` で同様に保護されます。
 
+## 監視中スイッチと自動停止
+
+就寝・勤務・外出などでダッシュボードを開けない時間に、Codespace を無駄に起動し続けないための仕組みです。
+
+- **監視中スイッチ**: サイドバーの「MONITORING」スイッチで「監視中(ON)/不在(OFF)」を切り替えます。状態は `GITLAB_TOKEN` で GitLab の `config-opencode` リポジトリ（`presence.json`）に保存されます。
+- **自動停止モニター**: Codespace 内で `presence-monitor.sh` が常駐し、以下を満たすと Codespace を自動停止します。
+  1. スイッチが **不在(OFF)** である
+  2. opencode の全セッションが完了している（`/session/status` に `"busy"` が1つも無い）
+  3. 上記の状態が猶予時間（既定180秒）継続した
+
+エージェントが動作中（busy）の間は停止しません。また、`~/.config/opencode`（GitLab の config-opencode を clone したもの）を利用するため、ローカルと同一のスキルや設定が Codespace 上でも使えます。
+
+### 必要な準備
+
+- ダッシュボード側: `GITLAB_TOKEN`（`config-opencode` への `write_repository` 権限）を設定。
+- Codespace 側: 対象リポジトリの `.devcontainer/` に `presence-monitor.sh` を含める（本リポジトリを参考にコピー）。`devcontainer.json` の `postStartCommand` が config-opencode を clone し、モニターを起動します。
+- GitHub Codespaces の **Default idle timeout は上限の240分（4時間）に設定**してください。エージェント稼働中はターミナル出力により idle がリセットされるため停止せず、完了後は最長4時間で Codespace 側タイムアウトがバックアップとして働きます。
+
 ## API接続について
 
 Personal access tokenはサーバー側でのみ読み込み、ブラウザへ返しません。`/api/status` と `/api/config` は現在の設定状態のみ返します。

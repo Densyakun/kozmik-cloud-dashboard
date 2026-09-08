@@ -279,6 +279,40 @@ const server = http.createServer(async (request, response) => {
       return json(response, 502, { message: `OpenCodeを起動できませんでした。${error.message || ''}` });
     }
   }
+  if (url.pathname === '/api/presence') {
+    const presenceToken = env.GITLAB_TOKEN || env.GITLAB_PRESENCE_TOKEN || '';
+    const presenceRepo = env.GITLAB_PRESENCE_REPO || 'Densyakun/config-opencode';
+    const presenceUrl = `https://gitlab.com/api/v4/projects/${encodeURIComponent(presenceRepo)}/repository/files/presence.json/raw?ref=main`;
+    async function localReadPresence() {
+      if (!presenceToken) return { monitoring: true, configured: false };
+      try {
+        const r = await fetch(presenceUrl, { headers: { 'PRIVATE-TOKEN': presenceToken } });
+        if (r.status === 404) return { monitoring: true, configured: true };
+        if (!r.ok) throw new Error(`GitLab API ${r.status}`);
+        const text = await r.text();
+        try { return { ...JSON.parse(text), configured: true }; } catch { return { monitoring: true, configured: true }; }
+      } catch (error) { return { monitoring: true, configured: true, error: error.message }; }
+    }
+    async function localWritePresence(monitoring) {
+      if (!presenceToken) throw new Error('GITLAB_TOKEN が設定されていません。');
+      const filePath = `https://gitlab.com/api/v4/projects/${encodeURIComponent(presenceRepo)}/repository/files/presence.json`;
+      const content = Buffer.from(JSON.stringify({ monitoring, updatedAt: new Date().toISOString() }, null, 2)).toString('base64');
+      const putRes = await fetch(filePath, { method: 'PUT', headers: { 'PRIVATE-TOKEN': presenceToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ branch: 'main', content, commit_message: `chore: presence ${monitoring ? 'on' : 'off'}`, encoding: 'base64' }) });
+      if (!putRes.ok) {
+        const postRes = await fetch(filePath, { method: 'POST', headers: { 'PRIVATE-TOKEN': presenceToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ branch: 'main', content, commit_message: `chore: presence ${monitoring ? 'on' : 'off'}`, encoding: 'base64' }) });
+        if (!postRes.ok) throw new Error(`GitLab API ${postRes.status}`);
+      }
+    }
+    if (request.method === 'GET') {
+      try { return json(response, 200, await localReadPresence()); } catch (error) { return json(response, 502, { message: error.message }); }
+    }
+    if (request.method === 'POST') {
+      const body = await readBody(request);
+      try { await localWritePresence(body.monitoring !== false); return json(response, 200, { ok: true, monitoring: body.monitoring !== false }); }
+      catch (error) { return json(response, 502, { message: error.message }); }
+    }
+    return json(response, 405, { message: 'Method Not Allowed' });
+  }
   if (url.pathname === '/api/opencode/status' && request.method === 'GET') {
     const ids = (url.searchParams.get('ids') || '').split(',').map((s) => s.trim()).filter(Boolean);
     const states = await Promise.all(ids.map(codespaceStatusEntry));

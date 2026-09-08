@@ -123,6 +123,98 @@ export function normalizeGithub(item) {
   return { id: item.name, name: item.display_name || item.name, provider: 'GitHub Codespaces', providerId: 'github', state: item.state, branch: item.git_status?.ref || 'main', repository: item.repository?.full_name || '-', url: item.web_url, updatedAt: item.updated_at };
 }
 
+// ---------------------------------------------------------------------------
+// Presence（監視中スイッチ）: ダッシュボードと Codespace 内 opencode の間で共有する状態。
+//
+// ブラウザ無しでも Codespace 側が読める必要があるため、状態は GitLab の
+// `config-opencode` リポジトリ（~/.config/opencode を管理している同一リポジトリ）内の
+// `presence.json` に保持する。ダッシュボードは GITLAB_TOKEN で書き込み、Codespace は
+// 自前の監視ループで `git pull` して読み取る。
+// ---------------------------------------------------------------------------
+export function getGitlabPresenceToken() {
+  return process.env.GITLAB_TOKEN || process.env.GITLAB_PRESENCE_TOKEN || '';
+}
+export function getPresenceRepo() {
+  return process.env.GITLAB_PRESENCE_REPO || 'Densyakun/config-opencode';
+}
+
+export async function gitlabApi(pathname, options = {}) {
+  const token = getGitlabPresenceToken();
+  if (!token) throw Object.assign(new Error('GITLAB_TOKEN が設定されていません'), { status: 400 });
+  const res = await fetch(`https://gitlab.com/api/v4${pathname}`, {
+    ...options,
+    headers: { 'PRIVATE-TOKEN': token, ...(options.headers || {}) },
+  });
+  if (!res.ok) {
+    let detail = `GitLab API ${res.status}`;
+    try { const body = await res.json(); detail = `${detail}: ${body.message || JSON.stringify(body)}`; } catch {}
+    throw Object.assign(new Error(detail), { status: res.status });
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+// 現在の presence（監視中か否か）を GitLab から取得する。
+export async function readPresence() {
+  const token = getGitlabPresenceToken();
+  const repo = encodeURIComponent(getPresenceRepo());
+  if (!token) return { monitoring: true };
+  const res = await fetch(`https://gitlab.com/api/v4/projects/${repo}/repository/files/presence.json/raw?ref=main`, {
+    headers: { 'PRIVATE-TOKEN': token },
+  });
+  if (res.status === 404) return { monitoring: true };
+  if (!res.ok) {
+    let detail = `GitLab API ${res.status}`;
+    try { const body = await res.json(); detail = `${detail}: ${body.message || JSON.stringify(body)}`; } catch {}
+    throw Object.assign(new Error(detail), { status: res.status });
+  }
+  const text = await res.text();
+  return parsePresence(text);
+}
+
+function parsePresence(text) {
+  try {
+    const parsed = JSON.parse(String(text));
+    return { monitoring: parsed?.monitoring !== false, updatedAt: parsed?.updatedAt || null };
+  } catch {
+    return { monitoring: true };
+  }
+}
+
+// presence を GitLab に書き込む。content/base64 で PUT し、新規なら POST する。
+export async function writePresence(monitoring) {
+  const repo = encodeURIComponent(getPresenceRepo());
+  const payload = JSON.stringify({ monitoring: Boolean(monitoring), updatedAt: new Date().toISOString() }, null, 2);
+  const content = Buffer.from(payload).toString('base64');
+  try {
+    await gitlabApi(`/projects/${repo}/repository/files/presence.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branch: 'main', content, commit_message: `chore: presence ${monitoring ? 'on' : 'off'}`, encoding: 'base64' }),
+    });
+  } catch (error) {
+    if (error?.status !== 400) throw error;
+    await gitlabApi(`/projects/${repo}/repository/files/presence.json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branch: 'main', content, commit_message: `chore: presence ${monitoring ? 'on' : 'off'}`, encoding: 'base64' }),
+    });
+  }
+  return { monitoring: Boolean(monitoring) };
+}
+
+// ---------------------------------------------------------------------------
+// Codespace 内 opencode のセッション状態をヘルスチェック的に読み、全セッションが
+// 完了（busy でない）かどうか判定する。Codespace 側の監視ループはこれと同等の
+// ロジックをローカル(localhost)に対して実行する。
+// SessionStatus: { type: "idle" } | { type: "retry" } | { type: "busy" }
+// "busy" が1つでもあれば「エージェント稼働中」とみなす。
+// ---------------------------------------------------------------------------
+export function describeSessionStatuses(statuses) {
+  const entries = Object.values(statuses || {});
+  const busy = entries.filter((s) => s?.type === 'busy');
+  return { total: entries.length, busy: busy.length, allDone: busy.length === 0 };
+}
+
 export function json(res, status, body) {
   res.status(status).json(body);
 }
