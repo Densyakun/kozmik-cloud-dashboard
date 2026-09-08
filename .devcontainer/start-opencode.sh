@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # start-opencode.sh
 # ---------------------------------------------------------------------------
-# opencode 本体（webサーバー）を Codespace 内で常駐起動する。
-# 1) 設定（config-opencode）を ~/.config/opencode へ反映（上書き方式・タイムアウト付き）
-# 2) opencode を未インストールなら導入
-# 3) opencode web を常駐起動し、クラッシュ時に再起動
+# Codespaces の postStartCommand から実行される「有限」のランチャー。
 #
-# このスクリプトは一切ハングしない（各外部アクセスに timeout を適用）。
-# 設定同期に失敗しても opencode 自体は起動する。
+# 重要: GitHub Codespaces は postStartCommand が終了するまで Codespace を
+# "Starting/Provisioning" 状態のままにする。そのため本スクリプトは
+# 必ず「短時間で exit 0 すること」（ここを while true にすると起動が完了しない）。
+#
+# 動作:
+#   1) 設定（private の config-opencode）を ~/.config/opencode へ反映（タイムアウト付き）
+#   2) opencode を未インストールなら導入
+#   3) opencode 常駐監視デーモンと自動停止モニターを「分離起動（detach）」してから
+#      すぐ exit 0 する（デーモン本体は新しいセッションで独立して生き続ける）
 # ---------------------------------------------------------------------------
 set -u
 
@@ -19,16 +23,31 @@ set -u
 : "${TMP_CLONE:=$HOME/.opencode-config-tmp}"
 : "${GITLAB_TOKEN:=$PRESENCE_GITLAB_TOKEN}"
 
-log() { echo "[start-opencode] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG=/tmp/start-opencode.log
 
-export BROWSER=true
-export OPENCODE_DISABLE_AUTOUPDATE=true
-export PATH="$HOME/.opencode/bin:$PATH"
+log() { echo "[start-opencode] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >>"$LOG"; }
+
 export GIT_TERMINAL_PROMPT=0
+export PATH="$HOME/.opencode/bin:$PATH"
+
+log "ランチャー開始（pid=$$）"
 
 # タイムアウト付き実行ラッパー（外部コマンドのハング防止）
 run_t() {
   if command -v timeout >/dev/null 2>&1; then timeout "$1" "${@:2}"; else "${@:2}"; fi
+}
+
+# デーモンの分離起動：新しいセッション(setsid)でバックグラウンド化し、disown して
+# postStartCommand のプロセスグループとは切り離す。stdin/stdout/stderr は /dev/null へ。
+launch_bg() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" >/dev/null 2>&1 < /dev/null &
+  else
+    nohup "$@" >/dev/null 2>&1 < /dev/null &
+  fi
+  disown 2>/dev/null || true
+  return 0
 }
 
 # ---- 1) 設定の反映 ---------------------------------------------------------
@@ -36,6 +55,7 @@ sync_config() {
   mkdir -p "$CONFIG_DIR"
   local auth_url="$CONFIG_REPO"
   if [ -n "$GITLAB_TOKEN" ]; then
+    # private リポジトリは oauth2:<token>@ 埋め込みで認証
     auth_url="$(printf '%s' "$CONFIG_REPO" | sed -E 's#(https?://)[^@]*@#\1#; s#^https?://#&oauth2:'"$GITLAB_TOKEN"'@#')"
   fi
   if [ -d "$TMP_CLONE/.git" ]; then
@@ -69,16 +89,12 @@ if [ ! -x "$OPENCODE_BIN" ]; then
   run_t 120 curl -fsSL https://opencode.ai/install | bash >/tmp/opencode-install.log 2>&1 || true
 fi
 if [ ! -x "$OPENCODE_BIN" ]; then
-  log "opencode が見つかりません（$OPENCODE_BIN）。起動を継続します"
+  log "警告: opencode が見つかりません（$OPENCODE_BIN）。後続の監視デーモンで失敗する場合があります"
 fi
 
-# ---- 3) 常駐起動 -----------------------------------------------------------
-log "opencode 常駐起動を開始します（port=$OPENCODE_PORT）"
-while true; do
-  code="$(run_t 10 curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$OPENCODE_PORT/" 2>/dev/null || echo 000)"
-  if [ "$code" = "000" ]; then
-    log "未応答のため opencode web を起動します"
-    nohup "$OPENCODE_BIN" web --hostname "$OPENCODE_HOST" --port "$OPENCODE_PORT" >>/tmp/opencode.log 2>&1 &
-  fi
-  sleep 15
-done
+# ---- 3) デーモンを分離起動して即座に終了 -----------------------------------
+launch_bg bash "$SCRIPT_DIR/start-opencode-daemon.sh"
+launch_bg bash "$SCRIPT_DIR/presence-monitor.sh"
+
+log "ランチャー完了：デーモンを分離起動しました。postStartCommand を終了します"
+exit 0

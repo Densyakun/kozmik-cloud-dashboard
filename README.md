@@ -41,7 +41,7 @@ OpenCodeはCodespace内で動作するため、対象リポジトリに `.devcon
 - `"image": "mcr.microsoft.com/devcontainers/universal:2"` — Codespaces標準のユニバーサルイメージ
 - `"forwardPorts": [4096]` — opencodeが使うポートを転送
 - `"portsAttributes"` — ポート4096の転送設定（既定は**private**。GitHubにログインしている本人だけがアクセス可能で安全）
-- `"postStartCommand"` — Codespace 起動のたびに `start-opencode.sh` が（1）`config-opencode` の設定を `~/.config/opencode` へ反映し、（2）`opencode web --hostname 0.0.0.0 --port 4096` を常駐起動（クラッシュ時は自動再起動）。`presence-monitor.sh`（自動停止モニター）も並行起動
+- `"postStartCommand"` — Codespace 起動のたびに `start-opencode.sh`（**有限のランチャー**）が（1）`config-opencode` の設定を `~/.config/opencode` へ反映し、（2）`opencode` を導入、その後 `start-opencode-daemon.sh`（`opencode web --hostname 0.0.0.0 --port 4096` の常駐監視・クラッシュ時自動再起動）と `presence-monitor.sh`（自動停止モニター）を **`setsid` で分離起動して即座に終了**する。※GitHub Codespaces は `postStartCommand` が終了するまで起動(Provisioning)が完了しないため、ランチャーを無限ループにしないことが必須
 
 **手順:**
 

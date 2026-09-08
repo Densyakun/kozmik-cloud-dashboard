@@ -8,8 +8,5 @@
       "onAutoForward": "notify"
     }
   },
-  "postStartCommand": {
-    "opencode": "bash .devcontainer/start-opencode.sh",
-    "presence-monitor": "bash .devcontainer/presence-monitor.sh"
-  }
+  "postStartCommand": "bash .devcontainer/start-opencode.sh"
 }
