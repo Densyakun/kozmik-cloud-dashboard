@@ -81,7 +81,10 @@ API/CLIで作成して一度もエディタを開いていないCodespaceでは�
 ### 必要な準備
 
 - ダッシュボード側: `GITLAB_TOKEN`（`config-opencode` への `write_repository` 権限）を設定。
-- Codespace 側: 対象リポジトリの `.devcontainer/` に `presence-monitor.sh` を含める（本リポジトリを参考にコピー）。`devcontainer.json` の `postStartCommand` が config-opencode を clone し、モニターを起動します。
+- Codespace 側: `PRESENCE_GITLAB_TOKEN`（`config-opencode` への `read_repository` 権限）を **Codespaces のシークレット（Development environment secret）** として設定する。これは `devcontainer.json` の `containerEnv`（`${localEnv:PRESENCE_GITLAB_TOKEN}`）経由で Codespace に自動注入され、監視モニターが毎ループ GitLab の `presence.json` を読み取ってスイッチ状態を即時反映します。
+  - GitHub リポジトリの Settings → Secrets and variables → **Codespaces** → **New repository secret** で、名前 `PRESENCE_GITLAB_TOKEN`、値に read 権限トークンを登録。
+  - シークレットは新しい Codespace 作成時または再起動時に反映されます。
+- 対象リポジトリの `.devcontainer/` に `presence-monitor.sh` を含める（本リポジトリを参考にコピー）。`devcontainer.json` の `postStartCommand` が config-opencode を clone し、モニターを起動します。
 - GitHub Codespaces の **Default idle timeout は上限の240分（4時間）に設定**してください。エージェント稼働中はターミナル出力により idle がリセットされるため停止せず、完了後は最長4時間で Codespace 側タイムアウトがバックアップとして働きます。
 
 ## API接続について

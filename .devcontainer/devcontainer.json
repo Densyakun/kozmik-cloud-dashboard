@@ -2,6 +2,9 @@
   "name": "Kozmik Cloud Deck - OpenCode",
   "image": "mcr.microsoft.com/devcontainers/universal:2",
   "forwardPorts": [4096],
+  "containerEnv": {
+    "PRESENCE_GITLAB_TOKEN": "${localEnv:PRESENCE_GITLAB_TOKEN}"
+  },
   "portsAttributes": {
     "4096": {
       "label": "opencode",
