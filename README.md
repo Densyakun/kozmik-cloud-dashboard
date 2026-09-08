@@ -41,7 +41,8 @@ OpenCodeはCodespace内で動作するため、対象リポジトリに `.devcon
 - `"image": "mcr.microsoft.com/devcontainers/universal:2"` — Codespaces標準のユニバーサルイメージ
 - `"forwardPorts": [4096]` — opencodeが使うポートを転送
 - `"portsAttributes"` — ポート4096の転送設定（既定は**private**。GitHubにログインしている本人だけがアクセス可能で安全）
-- `"postStartCommand"` — Codespace起動のたびに `opencode` を自動インストールし、`opencode web --hostname 0.0.0.0 --port 4096` を常駐起動（クラッシュ時は自動再起動）
+- `"postCreateCommand"` — 初回作成時に `setup-opencode-config.sh` を実行し、`config-opencode` の設定（config/skills/commands/plugins）を `~/.config/opencode` へ反映
+- `"postStartCommand"` — Codespace 起動のたびに `start-opencode.sh` が `opencode web --hostname 0.0.0.0 --port 4096` を常駐起動（クラッシュ時は自動再起動）。`presence-monitor.sh`（自動停止モニター）も並行起動
 
 **手順:**
 
@@ -76,7 +77,7 @@ API/CLIで作成して一度もエディタを開いていないCodespaceでは�
   2. opencode の全セッションが完了している（`/session/status` に `"busy"` が1つも無い）
   3. 上記の状態が猶予時間（既定180秒）継続した
 
-エージェントが動作中（busy）の間は停止しません。また、`~/.config/opencode`（GitLab の config-opencode を clone したもの）を利用するため、ローカルと同一のスキルや設定が Codespace 上でも使えます。
+エージェントが動作中（busy）の間は停止しません。また、`setup-opencode-config.sh` が `config-opencode`（GitLab）の追跡ファイルのみを `~/.config/opencode` へ反映するため、opencode が生成する `node_modules` 等と競合せず、ローカルと同一のスキル・設定が Codespace 上でも使えます。
 
 ### 必要な準備
 
@@ -84,7 +85,7 @@ API/CLIで作成して一度もエディタを開いていないCodespaceでは�
 - Codespace 側: `PRESENCE_GITLAB_TOKEN`（`config-opencode` への `read_repository` 権限）を **Codespaces のシークレット（Development environment secret）** として設定する。これは `devcontainer.json` の `containerEnv`（`${localEnv:PRESENCE_GITLAB_TOKEN}`）経由で Codespace に自動注入され、監視モニターが毎ループ GitLab の `presence.json` を読み取ってスイッチ状態を即時反映します。
   - GitHub リポジトリの Settings → Secrets and variables → **Codespaces** → **New repository secret** で、名前 `PRESENCE_GITLAB_TOKEN`、値に read 権限トークンを登録。
   - シークレットは新しい Codespace 作成時または再起動時に反映されます。
-- 対象リポジトリの `.devcontainer/` に `presence-monitor.sh` を含める（本リポジトリを参考にコピー）。`devcontainer.json` の `postStartCommand` が config-opencode を clone し、モニターを起動します。
+- 対象リポジトリの `.devcontainer/` に `setup-opencode-config.sh`・`start-opencode.sh`・`presence-monitor.sh` を含める（本リポジトリを参考にコピー）。`devcontainer.json` の `postCreateCommand`/`postStartCommand` がこれらを実行します。
 - GitHub Codespaces の **Default idle timeout は上限の240分（4時間）に設定**してください。エージェント稼働中はターミナル出力により idle がリセットされるため停止せず、完了後は最長4時間で Codespace 側タイムアウトがバックアップとして働きます。
 
 ## API接続について

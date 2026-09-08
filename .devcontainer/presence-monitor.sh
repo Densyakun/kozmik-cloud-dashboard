@@ -13,8 +13,8 @@ set -u
 : "${OPENCODE_PORT:=4096}"
 : "${OPENCODE_HOST:=127.0.0.1}"
 : "${OPENCODE_SERVER_USERNAME:=opencode}"
-: "${PRESENCE_REPO:=Densyakun/config-opencode}"
-: "${PRESENCE_URL:=https://gitlab.com/api/v4/projects/$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$PRESENCE_REPO" 2>/dev/null || echo "$PRESENCE_REPO")/repository/files/presence.json/raw?ref=main}"
+# presence.json の raw URL（Densyakun/config-opencode の URLエンコード済み形式）
+: "${PRESENCE_URL:=https://gitlab.com/api/v4/projects/Densyakun%2Fconfig-opencode/repository/files/presence.json/raw?ref=main}"
 : "${CONFIG_DIR:=$HOME/.config/opencode}"
 : "${MONITOR_INTERVAL:=60}"
 : "${GRACE_IDLE_BEFORE_STOP:=180}"

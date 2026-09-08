@@ -11,5 +11,9 @@
       "onAutoForward": "notify"
     }
   },
-  "postStartCommand": "export BROWSER=true; export OPENCODE_DISABLE_AUTOUPDATE=true; export PATH=\"$HOME/.opencode/bin:$PATH\"; if [ ! -x \"$HOME/.opencode/bin/opencode\" ]; then (curl -fsSL https://opencode.ai/install | bash >/tmp/opencode-install.log 2>&1 || true); fi; if [ ! -d \"$HOME/.config/opencode/.git\" ]; then (git clone https://gitlab.com/Densyakun/config-opencode.git \"$HOME/.config/opencode\" >/tmp/config-opencode-clone.log 2>&1 || true); else (git -C \"$HOME/.config/opencode\" pull --ff-only >/tmp/config-opencode-pull.log 2>&1 || true); fi; { while true; do if [ \"$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4096/ || echo 000)\" = '000' ]; then nohup \"$HOME/.opencode/bin/opencode\" web --hostname 0.0.0.0 --port 4096 >>/tmp/opencode.log 2>&1 & fi; sleep 15; done; } & { MONITOR=\"$(find /workspaces -maxdepth 3 -name presence-monitor.sh -type f 2>/dev/null | head -n1)\"; if [ -z \"$MONITOR\" ] && [ -f \"$HOME/.config/opencode/presence-monitor.sh\" ]; then MONITOR=\"$HOME/.config/opencode/presence-monitor.sh\"; fi; if [ -n \"$MONITOR\" ]; then (nohup bash \"$MONITOR\" >>/tmp/presence-monitor.log 2>&1 &); fi; }"
+  "postCreateCommand": "bash .devcontainer/setup-opencode-config.sh",
+  "postStartCommand": {
+    "opencode": "bash .devcontainer/start-opencode.sh",
+    "presence-monitor": "bash .devcontainer/presence-monitor.sh"
+  }
 }
