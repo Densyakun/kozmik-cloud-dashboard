@@ -280,28 +280,31 @@ const server = http.createServer(async (request, response) => {
     }
   }
   if (url.pathname === '/api/presence') {
-    const presenceToken = env.GITLAB_TOKEN || env.GITLAB_PRESENCE_TOKEN || '';
-    const presenceRepo = env.GITLAB_PRESENCE_REPO || 'Densyakun/config-opencode';
-    const presenceUrl = `https://gitlab.com/api/v4/projects/${encodeURIComponent(presenceRepo)}/repository/files/presence.json/raw?ref=main`;
+    const presenceToken = env.GITHUB_PRESENCE_TOKEN || env.GITHUB_TOKEN || '';
+    const presenceRepo = env.GITHUB_PRESENCE_REPO || 'Densyakun/opencode-workspace';
+    const presenceBranch = env.GITHUB_PRESENCE_BRANCH || 'presence';
+    const presenceHeaders = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', Authorization: `Bearer ${presenceToken}` };
+    const presenceContentsUrl = `https://api.github.com/repos/${presenceRepo}/contents/presence.json`;
     async function localReadPresence() {
       if (!presenceToken) return { monitoring: true, configured: false };
       try {
-        const r = await fetch(presenceUrl, { headers: { 'PRIVATE-TOKEN': presenceToken } });
+        const r = await fetch(`${presenceContentsUrl}?ref=${encodeURIComponent(presenceBranch)}`, { headers: presenceHeaders });
         if (r.status === 404) return { monitoring: true, configured: true };
-        if (!r.ok) throw new Error(`GitLab API ${r.status}`);
-        const text = await r.text();
+        if (!r.ok) throw new Error(`GitHub API ${r.status}`);
+        const data = await r.json();
+        const text = Buffer.from(String(data.content || '').replace(/\n/g, ''), 'base64').toString('utf8');
         try { return { ...JSON.parse(text), configured: true }; } catch { return { monitoring: true, configured: true }; }
       } catch (error) { return { monitoring: true, configured: true, error: error.message }; }
     }
     async function localWritePresence(monitoring) {
-      if (!presenceToken) throw new Error('GITLAB_TOKEN が設定されていません。');
-      const filePath = `https://gitlab.com/api/v4/projects/${encodeURIComponent(presenceRepo)}/repository/files/presence.json`;
+      if (!presenceToken) throw new Error('GITHUB_PRESENCE_TOKEN が設定されていません。');
       const content = Buffer.from(JSON.stringify({ monitoring, updatedAt: new Date().toISOString() }, null, 2)).toString('base64');
-      const putRes = await fetch(filePath, { method: 'PUT', headers: { 'PRIVATE-TOKEN': presenceToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ branch: 'main', content, commit_message: `chore: presence ${monitoring ? 'on' : 'off'}`, encoding: 'base64' }) });
-      if (!putRes.ok) {
-        const postRes = await fetch(filePath, { method: 'POST', headers: { 'PRIVATE-TOKEN': presenceToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ branch: 'main', content, commit_message: `chore: presence ${monitoring ? 'on' : 'off'}`, encoding: 'base64' }) });
-        if (!postRes.ok) throw new Error(`GitLab API ${postRes.status}`);
-      }
+      let sha;
+      const cur = await fetch(`${presenceContentsUrl}?ref=${encodeURIComponent(presenceBranch)}`, { headers: presenceHeaders });
+      if (cur.ok) sha = (await cur.json())?.sha;
+      else if (cur.status !== 404) throw new Error(`GitHub API ${cur.status}`);
+      const putRes = await fetch(presenceContentsUrl, { method: 'PUT', headers: { ...presenceHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ message: `chore: presence ${monitoring ? 'on' : 'off'}`, content, branch: presenceBranch, ...(sha ? { sha } : {}) }) });
+      if (!putRes.ok) throw new Error(`GitHub API ${putRes.status}`);
     }
     if (request.method === 'GET') {
       try { return json(response, 200, await localReadPresence()); } catch (error) { return json(response, 502, { message: error.message }); }

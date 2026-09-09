@@ -211,7 +211,7 @@ loadConnectedEnvironments();
 setInterval(() => { if (!document.hidden) loadConnectedEnvironments(); }, 30000);
 
 // 監視中（在室）スイッチ。ON=ユーザーが監視中（自動停止しない）、OFF=不在（全セッション完了時に
-// Codespace内の監視ループが自動停止する）。状態は GitLab の presence.json に保存される。
+// Codespace内の監視ループが自動停止する）。状態は GitHub の opencode-workspace リポジトリ（presence ブランチ）の presence.json に保存される。
 let presenceBusy = false;
 async function loadPresence() {
   const toggle = document.querySelector('#presenceToggle');
@@ -222,7 +222,7 @@ async function loadPresence() {
     const res = await fetch('/api/presence');
     const data = await res.json().catch(() => ({}));
     toggle.checked = data.monitoring !== false;
-    if (data.configured === false) { toggle.disabled = true; hintEl.textContent = 'GITLAB_TOKEN未設定'; }
+    if (data.configured === false) { toggle.disabled = true; hintEl.textContent = 'GITHUB_PRESENCE_TOKEN未設定'; }
     else { toggle.disabled = false; hintEl.textContent = toggle.checked ? 'ON: 自動停止しない' : 'OFF: 自動停止が有効'; }
     stateEl.textContent = toggle.checked ? '監視中' : '不在';
   } catch {

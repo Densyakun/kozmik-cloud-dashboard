@@ -69,7 +69,7 @@ API/CLIで作成して一度もエディタを開いていないCodespaceでは�
 
 就寝・勤務・外出などでダッシュボードを開けない時間に、Codespace を無駄に起動し続けないための仕組みです。
 
-- **監視中スイッチ**: サイドバーの「MONITORING」スイッチで「監視中(ON)/不在(OFF)」を切り替えます。状態は `GITLAB_TOKEN` で GitLab の `config-opencode` リポジトリ（`presence.json`）に保存されます。
+- **監視中スイッチ**: サイドバーの「MONITORING」スイッチで「監視中(ON)/不在(OFF)」を切り替えます。状態は `GITHUB_PRESENCE_TOKEN` で GitHub の `opencode-workspace` リポジトリの `presence` ブランチ（`presence.json`）に保存されます。在席⇄離席の切り替えは頻繁に起きる「状態」のため、`main` ブランチの履歴を汚染しないよう専用ブランチに置いています。
 - **自動停止モニター**: Codespace 内で `presence-monitor.sh` が常駐し、以下を満たすと Codespace を自動停止します。
   1. スイッチが **不在(OFF)** である
   2. opencode の全セッションが完了している（`/session/status` に `"busy"` が1つも無い）
@@ -79,13 +79,12 @@ API/CLIで作成して一度もエディタを開いていないCodespaceでは�
 
 ### 必要な準備
 
-- ダッシュボード側: `GITLAB_TOKEN`（`config-opencode` への `write_repository` 権限）を設定。
-- Codespace 側: `PRESENCE_GITLAB_TOKEN`（`config-opencode` への `read_repository` 権限）を **Codespaces のシークレット（Development environment secret）** として設定する。このシークレットは名前そのまま（`PRESENCE_GITLAB_TOKEN`）で環境変数として Codespace と `postStartCommand`（`start-opencode.sh` / `presence-monitor.sh`）に自動注入されます。config 同期（private リポジトリの clone）と監視モニターがこの値を使います。
-  - GitHub リポジトリの Settings → Secrets and variables → **Codespaces** → **New repository secret** で、名前 `PRESENCE_GITLAB_TOKEN`、値に read 権限トークンを登録。
+- ダッシュボード側: `GITHUB_PRESENCE_TOKEN`（`opencode-workspace` リポジトリの Contents 読み書き権限。classic PAT なら `repo`、fine-grained なら Contents: Read and write）を設定。保存先は既定で `Densyakun/opencode-workspace` の `presence` ブランチ（`GITHUB_PRESENCE_REPO` / `GITHUB_PRESENCE_BRANCH` で変更可）。
+- Codespace 側: 監視スイッチの読み取りは Codespaces 自動注入の `GITHUB_TOKEN` で行うため、監視専用の追加シークレットは不要です。config 同期（private リポジトリの clone）には従来どおり `GITLAB_TOKEN`（または `PRESENCE_GITLAB_TOKEN` からのフォールバック）を使います。
   - シークレットは新しい Codespace 作成時または再起動時に反映されます。
 - （任意）Codespaces シークレット **`OPENCODE_SERVER_PASSWORD`** で opencode Web の Basic 認証パスワードを固定できます。未設定時は初回起動にランダム生成され `~/.config/opencode/.webpass` に保持されます。
 - 対象リポジトリの `.devcontainer/` に `start-opencode.sh`・`presence-monitor.sh` を含める（本リポジトリを参考にコピー）。`devcontainer.json` の `postStartCommand` がこれらを実行します。
-- `config-opencode` は **private リポジトリ**のため、Codespace 内からの `git clone` には認証トークンが必要です。`PRESENCE_GITLAB_TOKEN`（上記）を config 同期にも使います。
+- `config-opencode` は **private リポジトリ**のため、Codespace 内からの `git clone` には認証トークンが必要です。`GITLAB_TOKEN`（未設定時は `PRESENCE_GITLAB_TOKEN` からのフォールバック）を config 同期に使います。監視スイッチの読み取りには使いません。
 - GitHub Codespaces の **Default idle timeout は上限の240分（4時間）に設定**してください。エージェント稼働中はターミナル出力により idle がリセットされるため停止せず、完了後は最長4時間で Codespace 側タイムアウトがバックアップとして働きます。
 
 ## API接続について

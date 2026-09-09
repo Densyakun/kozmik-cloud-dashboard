@@ -126,48 +126,55 @@ export function normalizeGithub(item) {
 // ---------------------------------------------------------------------------
 // Presence（監視中スイッチ）: ダッシュボードと Codespace 内 opencode の間で共有する状態。
 //
-// ブラウザ無しでも Codespace 側が読める必要があるため、状態は GitLab の
-// `config-opencode` リポジトリ（~/.config/opencode を管理している同一リポジトリ）内の
-// `presence.json` に保持する。ダッシュボードは GITLAB_TOKEN で書き込み、Codespace は
-// 自前の監視ループで `git pull` して読み取る。
+// 在席⇄離席の切り替えは頻繁に起きる「状態」であり main ブランチの履歴を汚染
+// しないよう、状態は GitHub の opencode-workspace リポジトリの専用ブランチ
+// `presence` に置く `presence.json` に保持する。ダッシュボードは
+// GITHUB_PRESENCE_TOKEN で書き込み、Codespace は自前の監視ループで
+// raw.githubusercontent.com から読み取る。
 // ---------------------------------------------------------------------------
-export function getGitlabPresenceToken() {
-  return process.env.GITLAB_TOKEN || process.env.GITLAB_PRESENCE_TOKEN || '';
+export function getPresenceToken() {
+  return process.env.GITHUB_PRESENCE_TOKEN || process.env.GITHUB_TOKEN || '';
 }
 export function getPresenceRepo() {
-  return process.env.GITLAB_PRESENCE_REPO || 'Densyakun/config-opencode';
+  return process.env.GITHUB_PRESENCE_REPO || 'Densyakun/opencode-workspace';
 }
+export function getPresenceBranch() {
+  return process.env.GITHUB_PRESENCE_BRANCH || 'presence';
+}
+export const PRESENCE_PATH = 'presence.json';
 
-export async function gitlabApi(pathname, options = {}) {
-  const token = getGitlabPresenceToken();
-  if (!token) throw Object.assign(new Error('GITLAB_TOKEN が設定されていません'), { status: 400 });
-  const res = await fetch(`https://gitlab.com/api/v4${pathname}`, {
+export async function presenceGithubApi(pathname, options = {}) {
+  const token = getPresenceToken();
+  if (!token) throw Object.assign(new Error('GITHUB_PRESENCE_TOKEN が設定されていません'), { status: 400 });
+  const res = await fetch(`https://api.github.com${pathname}`, {
     ...options,
-    headers: { 'PRIVATE-TOKEN': token, ...(options.headers || {}) },
+    headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', Authorization: `Bearer ${token}`, ...(options.headers || {}) },
   });
   if (!res.ok) {
-    let detail = `GitLab API ${res.status}`;
+    let detail = `GitHub API ${res.status}`;
     try { const body = await res.json(); detail = `${detail}: ${body.message || JSON.stringify(body)}`; } catch {}
     throw Object.assign(new Error(detail), { status: res.status });
   }
   return res.status === 204 ? null : res.json();
 }
 
-// 現在の presence（監視中か否か）を GitLab から取得する。
+// 現在の presence（監視中か否か）を GitHub の presence ブランチから取得する。
 export async function readPresence() {
-  const token = getGitlabPresenceToken();
-  const repo = encodeURIComponent(getPresenceRepo());
+  const token = getPresenceToken();
   if (!token) return { monitoring: true };
-  const res = await fetch(`https://gitlab.com/api/v4/projects/${repo}/repository/files/presence.json/raw?ref=main`, {
-    headers: { 'PRIVATE-TOKEN': token },
+  const repo = getPresenceRepo();
+  const branch = getPresenceBranch();
+  const res = await fetch(`https://api.github.com/repos/${repo}/contents/${PRESENCE_PATH}?ref=${encodeURIComponent(branch)}`, {
+    headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', Authorization: `Bearer ${token}` },
   });
   if (res.status === 404) return { monitoring: true };
   if (!res.ok) {
-    let detail = `GitLab API ${res.status}`;
+    let detail = `GitHub API ${res.status}`;
     try { const body = await res.json(); detail = `${detail}: ${body.message || JSON.stringify(body)}`; } catch {}
     throw Object.assign(new Error(detail), { status: res.status });
   }
-  const text = await res.text();
+  const data = await res.json();
+  const text = Buffer.from(String(data.content || '').replace(/\n/g, ''), 'base64').toString('utf8');
   return parsePresence(text);
 }
 
@@ -180,25 +187,30 @@ function parsePresence(text) {
   }
 }
 
-// presence を GitLab に書き込む。content/base64 で PUT し、新規なら POST する。
+// presence を GitHub の presence ブランチに書き込む。既存ファイルの sha を
+// 取得して PUT で更新し、存在しなければ sha 無しで新規作成する。
 export async function writePresence(monitoring) {
-  const repo = encodeURIComponent(getPresenceRepo());
+  const repo = getPresenceRepo();
+  const branch = getPresenceBranch();
   const payload = JSON.stringify({ monitoring: Boolean(monitoring), updatedAt: new Date().toISOString() }, null, 2);
   const content = Buffer.from(payload).toString('base64');
+  let sha;
   try {
-    await gitlabApi(`/projects/${repo}/repository/files/presence.json`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branch: 'main', content, commit_message: `chore: presence ${monitoring ? 'on' : 'off'}`, encoding: 'base64' }),
-    });
+    const current = await presenceGithubApi(`/repos/${repo}/contents/${PRESENCE_PATH}?ref=${encodeURIComponent(branch)}`);
+    sha = current?.sha;
   } catch (error) {
-    if (error?.status !== 400) throw error;
-    await gitlabApi(`/projects/${repo}/repository/files/presence.json`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branch: 'main', content, commit_message: `chore: presence ${monitoring ? 'on' : 'off'}`, encoding: 'base64' }),
-    });
+    if (error?.status !== 404) throw error;
   }
+  await presenceGithubApi(`/repos/${repo}/contents/${PRESENCE_PATH}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: `chore: presence ${monitoring ? 'on' : 'off'}`,
+      content,
+      branch,
+      ...(sha ? { sha } : {}),
+    }),
+  });
   return { monitoring: Boolean(monitoring) };
 }
 
