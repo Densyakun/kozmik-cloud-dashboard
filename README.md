@@ -38,25 +38,24 @@ OpenCodeはCodespace内で動作するため、対象リポジトリに `.devcon
 
 `.devcontainer/devcontainer.json` に含まれる内容:
 
-- `"image": "mcr.microsoft.com/devcontainers/universal:2"` — Codespaces標準のユニバーサルイメージ
+- `"build.dockerfile": ".devcontainer/Dockerfile"` — **軽量な自前イメージ**（`debian:12-slim` ＋ curl/git/tar/sed/grep/util-linux ＋ opencode をビルド時にプリインストール）。旧 `universal:2`（数GB）に比べて**初回起動が大幅に高速**です。
 - `"forwardPorts": [4096]` — opencodeが使うポートを転送
-- `"portsAttributes"` — ポート4096の転送設定（既定は**private**。GitHubにログインしている本人だけがアクセス可能で安全）
-- `"postStartCommand"` — Codespace 起動のたびに `start-opencode.sh`（**有限のランチャー**）が（1）`config-opencode` の設定を `~/.config/opencode` へ反映し、（2）`opencode` を導入、その後 `start-opencode-daemon.sh`（`opencode web --hostname 0.0.0.0 --port 4096` の常駐監視・クラッシュ時自動再起動）と `presence-monitor.sh`（自動停止モニター）を **`setsid` で分離起動して即座に終了**する。※GitHub Codespaces は `postStartCommand` が終了するまで起動(Provisioning)が完了しないため、ランチャーを無限ループにしないことが必須
+- `"portsAttributes"` — ポート4096の転送設定。`visibility` は **public**（`https://<codespace>-4096.app.github.dev` をログインなしで開ける）かつ opencode を **Basic 認証（`opencode` / パスワード）** で保護しています。
+- `"hostRequirements"` — 高速なマシン指定（cpus4/memory8gb/storage16gb）
+- `"postStartCommand"` — Codespace 起動のたびに `start-opencode.sh`（**有限のランチャー**）が（1）Basic認証パスワードを用意し、（2）`config-opencode` の設定を `~/.config/opencode` へ反映、（3）`start-opencode-daemon.sh`（`opencode web --hostname 0.0.0.0 --port 4096` の常駐監視・クラッシュ時自動再起動）と `presence-monitor.sh`（自動停止モニター）を **`setsid` で分離起動して即座に終了**する。※GitHub Codespaces は `postStartCommand` が終了するまで起動(Provisioning)が完了しないため、ランチャーを無限ループにしないことが必須
 
 **手順:**
 
-1. 対象リポジトリのルートに `.devcontainer/devcontainer.json` を追加してコミット
+1. 対象リポジトリに `.devcontainer/`（`devcontainer.json`・`Dockerfile`・各 `.sh`）を追加してコミット
 2. Codespacesでリポジトリを開いて **「Rebuild Container（コンテナーの再ビルド）」** を実行する（追加済みのCodespaceには再ビルド前に反映されません）
-3. `postStartCommand` により opencode がポート4096で起動し、`https://<codespace>-4096.app.github.dev` でアクセスできます
+3. `postStartCommand` により opencode がポート4096で起動し、`https://<codespace>-4096.app.github.dev` でアクセスできます（Basic認証ダイアログでユーザー名 `opencode` とパスワードを入力）
 
-### ポート公開（public）について
+### ポート公開（public）と Basic 認証
 
-- **システム既定（private）**: GitHub にログイン中のブラウザのみアクセスできます。opencodeはBasic認証なしで起動するため、**公開(public)するまでは本人以外はアクセスできず安全**です。
-- **全ユーザーに公開する場合**: ポートを public に設定します。
-  - `.devcontainer/devcontainer.json` の `portsAttributes."4096".visibility` に `"public"` を設定して再ビルドする
-  - または Codespaces の **PORTS タブ** / `gh codespace ports visibility 4096:public` で公開設定にする
-  - publicにする場合は、opencodeにBasic認証を設定してください（`.devcontainer` で `OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD` を設定し再ビルド。ユーザー名の既定は `opencode`）
-- 組織ポリシーで public ポートが無効な場合は、private のまま GitHub ログインで利用するか、組織設定の変更が必要です
+- ポート4096は **public**（ログイン不要でURLを開ける）＋ opencode の **Basic 認証**で保護しています。ユーザー名は既定 `opencode`。
+- パスワードは Codespaces シークレット **`OPENCODE_SERVER_PASSWORD`** で設定します（未設定時は初回起動時にランダム生成され `~/.config/opencode/.webpass` に保存、再起動でも同じ値）。
+- この Basic 認証の値は `presence-monitor.sh`（セッション監視）が opencode サーバーへの問い合わせにも使います。
+- 組織ポリシーで public ポートが無効な場合は、`portsAttributes."4096".visibility` を `"private"` に変更して GitHub ログイン経由で利用してください。
 
 ### ヘッドレス（エディタ未接続）Codespaceの注意
 
@@ -84,6 +83,7 @@ API/CLIで作成して一度もエディタを開いていないCodespaceでは�
 - Codespace 側: `PRESENCE_GITLAB_TOKEN`（`config-opencode` への `read_repository` 権限）を **Codespaces のシークレット（Development environment secret）** として設定する。このシークレットは名前そのまま（`PRESENCE_GITLAB_TOKEN`）で環境変数として Codespace と `postStartCommand`（`start-opencode.sh` / `presence-monitor.sh`）に自動注入されます。config 同期（private リポジトリの clone）と監視モニターがこの値を使います。
   - GitHub リポジトリの Settings → Secrets and variables → **Codespaces** → **New repository secret** で、名前 `PRESENCE_GITLAB_TOKEN`、値に read 権限トークンを登録。
   - シークレットは新しい Codespace 作成時または再起動時に反映されます。
+- （任意）Codespaces シークレット **`OPENCODE_SERVER_PASSWORD`** で opencode Web の Basic 認証パスワードを固定できます。未設定時は初回起動にランダム生成され `~/.config/opencode/.webpass` に保持されます。
 - 対象リポジトリの `.devcontainer/` に `start-opencode.sh`・`presence-monitor.sh` を含める（本リポジトリを参考にコピー）。`devcontainer.json` の `postStartCommand` がこれらを実行します。
 - `config-opencode` は **private リポジトリ**のため、Codespace 内からの `git clone` には認証トークンが必要です。`PRESENCE_GITLAB_TOKEN`（上記）を config 同期にも使います。
 - GitHub Codespaces の **Default idle timeout は上限の240分（4時間）に設定**してください。エージェント稼働中はターミナル出力により idle がリセットされるため停止せず、完了後は最長4時間で Codespace 側タイムアウトがバックアップとして働きます。

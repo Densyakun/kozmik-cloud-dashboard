@@ -31,7 +31,24 @@ log() { echo "[start-opencode] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >>"$LOG"; }
 export GIT_TERMINAL_PROMPT=0
 export PATH="$HOME/.opencode/bin:$PATH"
 
-log "ランチャー開始（pid=$$）"
+# ---- opencode Web の Basic 認証（port 4096 を public で公開するため必須） ----
+# 優先: Codespaces シークレット OPENCODE_SERVER_PASSWORD。
+# なければ一時パスワードを生成し ~/.opencode/.webpass に保持（再起動で同じ値になる）。
+# ※~/.config/opencode は config-opencode の同期対象のため、鍵をそこに置かない。
+PW_FILE="$HOME/.opencode/.webpass"
+if [ -z "${OPENCODE_SERVER_PASSWORD:-}" ]; then
+  mkdir -p "$HOME/.opencode"
+  if [ -s "$PW_FILE" ]; then
+    OPENCODE_SERVER_PASSWORD="$(cat "$PW_FILE")"
+  else
+    OPENCODE_SERVER_PASSWORD="$(command -v openssl >/dev/null 2>&1 && openssl rand -hex 16 2>/dev/null || echo "opencode-$(date +%s)")"
+    printf '%s' "$OPENCODE_SERVER_PASSWORD" > "$PW_FILE"
+    chmod 600 "$PW_FILE"
+    log "OPENCODE_SERVER_PASSWORD 未設定のため一時パスワードを生成しました: $PW_FILE"
+  fi
+  export OPENCODE_SERVER_PASSWORD
+fi
+log "opencode Basic 認証を使用します（username=opencode）"
 
 # タイムアウト付き実行ラッパー（外部コマンドのハング防止）
 run_t() {
