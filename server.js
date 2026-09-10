@@ -201,7 +201,7 @@ const server = http.createServer(async (request, response) => {
   if (url.pathname === '/api/environments' && request.method === 'POST') {
     const body = await readBody(request);
     if (!providers.codespaces) return json(response, 400, { message: 'GITHUB_CODESPACES_TOKEN が設定されていません。' });
-    if (!body.repositoryId && !body.repo) return json(response, 400, { message: 'リポジトリが必要です。自分のリポジトリを選ぶか、GitHubで先にリポジトリを作成してください。' });
+    if (!body.repositoryId && !body.repo) body.repo = 'Densyakun/opencode-workspace';
     try {
       let repositoryId = body.repositoryId;
       let repoName = body.repo;

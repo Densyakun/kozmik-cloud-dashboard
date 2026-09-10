@@ -20,7 +20,7 @@ export default async function handler(req, res) {
       body = raw ? JSON.parse(raw) : {};
     }
     if (!providers.codespaces) return res.status(400).json({ message: 'GITHUB_CODESPACES_TOKEN が設定されていません。' });
-    if (!body.repositoryId && !body.repo) return res.status(400).json({ message: 'リポジトリが必要です。自分のリポジトリを選ぶか、GitHubで先にリポジトリを作成してください。' });
+    if (!body.repositoryId && !body.repo) body.repo = 'Densyakun/opencode-workspace';
     try {
       let repositoryId = body.repositoryId;
       let repoName = body.repo;

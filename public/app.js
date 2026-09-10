@@ -35,6 +35,7 @@ document.querySelector('#newEnvForm').addEventListener('submit', async (event) =
   } catch { notify('サーバーに接続できません'); }
   finally { button.disabled = false; button.textContent = '作成する'; }
 });
+const DEFAULT_REPO = 'Densyakun/opencode-workspace';
 async function loadRepos() {
   const select = document.querySelector('#envRepo');
   select.innerHTML = '<option value="">読み込み中...</option>';
@@ -44,6 +45,15 @@ async function loadRepos() {
     if (!result.ok) { select.innerHTML = `<option value="">${data.message || '取得できません'}</option>`; return; }
     if (!data.repos?.length) { select.innerHTML = '<option value="">リポジトリありません</option>'; return; }
     select.innerHTML = data.repos.map((item) => `<option value="${item.fullName}" data-id="${item.id}">${item.fullName}${item.private ? ' (private)' : ''}</option>`).join('');
+    // 作成時の既定リポジトリを選択（一覧に無ければ先頭に追加。サーバー側でID解決される）
+    let selected = [...select.options].find((o) => o.value.toLowerCase() === DEFAULT_REPO.toLowerCase());
+    if (!selected) {
+      selected = document.createElement('option');
+      selected.value = DEFAULT_REPO;
+      selected.textContent = `${DEFAULT_REPO}（既定）`;
+      select.prepend(selected);
+    }
+    select.value = selected.value;
   } catch { select.innerHTML = '<option value="">取得に失敗しました</option>'; }
 }
 document.querySelector('#refreshRepos').addEventListener('click', loadRepos);
@@ -52,7 +62,15 @@ function bindEnvironmentActions() {
   document.querySelectorAll('.open-button').forEach((button) => button.addEventListener('click', () => { if (button.dataset.url) window.open(button.dataset.url, '_blank', 'noopener'); else notify(`${button.dataset.env} のワークスペースを開いています`); }));
   document.querySelectorAll('.opencode-button').forEach((button) => button.addEventListener('click', async () => { await launchOpenCode(button.dataset.env); }));
   document.querySelectorAll('.delete-button').forEach((button) => button.addEventListener('click', () => openDeleteConfirm(button.dataset.provider, button.dataset.env, button.dataset.name)));
+  document.querySelectorAll('.split-toggle').forEach((toggle) => toggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const menu = toggle.parentElement.querySelector('.split-menu');
+    const willOpen = menu.hidden;
+    document.querySelectorAll('.split-menu').forEach((m) => { m.hidden = true; });
+    menu.hidden = !willOpen;
+  }));
   document.querySelectorAll('.stop-button,.start-button').forEach((button) => button.addEventListener('click', async () => {
+    document.querySelectorAll('.split-menu').forEach((m) => { m.hidden = true; });
     const action = button.classList.contains('stop-button') ? 'stop' : 'start';
     button.disabled = true;
     const prev = button.textContent;
@@ -194,9 +212,16 @@ async function loadConnectedEnvironments() {
     const list = document.querySelector('#environmentList');
     list.innerHTML = data.environments.map((item) => {
       const running = String(item.state).toLowerCase().includes('run') || ['available', 'active'].includes(String(item.state).toLowerCase());
-      return `<article class="environment-card ${running ? 'running' : 'paused'}"><div class="card-top"><div class="provider-icon github">◖</div><div class="env-title"><h3>${item.name}</h3><div class="meta"><span class="pill ${running ? 'live' : 'pause'}">● ${running ? 'Running' : 'Paused'}</span><span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div><div class="opencode-status" data-env="${item.id}"></div><div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${running ? `<button class="stop-button" data-provider="github" data-env="${item.id}">停止</button>` : `<button class="start-button" data-provider="github" data-env="${item.id}">起動</button>`}<button class="opencode-button" data-env="${item.id}">OpenCode起動</button><button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="github" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
+      const launchButtons = running
+        ? `<button class="stop-button" data-provider="github" data-env="${item.id}">停止</button><button class="opencode-button" data-env="${item.id}">起動</button>`
+        : `<span class="split-group"><button class="opencode-button" data-env="${item.id}">起動</button><button class="split-toggle" aria-label="その他の起動方法">▾</button><span class="split-menu" hidden><button class="start-button" data-provider="github" data-env="${item.id}">codespaceのみ起動</button></span></span>`;
+      return `<article class="environment-card ${running ? 'running' : 'paused'}"><div class="card-top"><div class="provider-icon github">◖</div><div class="env-title"><h3>${item.name}</h3><div class="meta"><span class="pill ${running ? 'live' : 'pause'}">● ${running ? 'Running' : 'Paused'}</span><span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div><div class="opencode-status" data-env="${item.id}"></div><div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${launchButtons}<button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="github" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
     }).join('');
-    bindEnvironmentActions();
+bindEnvironmentActions();
+// Splitメニューは一覧再描画で作り直されるため、閉じる処理は document に1度だけ登録する
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.split-group')) document.querySelectorAll('.split-menu').forEach((m) => { m.hidden = true; });
+});
     pollServeStatus();
   } catch (error) {
     document.querySelector('#environmentList').innerHTML = `<div class="empty-state"><strong>読込に失敗しました</strong><span>${error instanceof Error ? error.message : 'サーバーに接続できません'}</span><div class="empty-actions"><button class="ghost-button" onclick="loadConnectedEnvironments()">再読み込み</button></div></div>`;

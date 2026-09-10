@@ -93,7 +93,7 @@ Personal access tokenはサーバー側でのみ読み込み、ブラウザへ�
 
 `GET /api/environments` は設定済みのCodespacesから環境を取得します。GitHub Codespacesについては公式REST APIを利用し、一覧・作成・起動・停止・削除に対応しています。
 
-`POST /api/environments` はリポジトリID/refでCodespacesを作成します。
+`POST /api/environments` はリポジトリID/refでCodespacesを作成します。リポジトリ未指定時は `Densyakun/opencode-workspace` が既定になります（作成ダイアログでも同リポジトリが初期選択されます）。
 
 `POST /api/opencode/serve` は、GitHub REST API で対象Codespaceを起動します（停止中なら `POST /user/codespaces/{name}/start` を呼び出し、起動中・稼働中なら何もしません）。状態はすぐには反映されないため、フロントエンドは `GET /api/opencode/status?ids=<コードスペース名のカンマ区切り>` を5秒間隔でポーリングします。
 
