@@ -13,6 +13,10 @@ set -u
 : "${OPENCODE_PORT:=4096}"
 : "${OPENCODE_HOST:=0.0.0.0}"
 : "${OPENCODE_BIN:=$HOME/.opencode/bin/opencode}"
+# opencode の作業ディレクトリ。Web UI の初期ディレクトリになる。
+# Codespace ではリポジトリ群が /workspaces 配下に置かれるため、~/ ではなく
+# /workspaces を既定にする。環境変数 OPENCODE_WORKDIR で上書き可能。
+: "${OPENCODE_WORKDIR:=/workspaces}"
 
 LOG=/tmp/opencode-supervisor.log
 PIDFILE=/tmp/opencode.pid
@@ -44,6 +48,14 @@ opencode_alive() {
 rm -f "$PIDFILE"
 
 log "opencode 監督デーモン開始（port=$OPENCODE_PORT）"
+# opencode の起動ディレクトリを /workspaces に固定する（postStartCommand 継承の
+# カレントに依存させない）。デーモン配下で起動する opencode が継承する。
+if [ -d "$OPENCODE_WORKDIR" ]; then
+  cd "$OPENCODE_WORKDIR" || log "警告: $OPENCODE_WORKDIR へ移動できません"
+  log "作業ディレクトリ: $(pwd)"
+else
+  log "警告: $OPENCODE_WORKDIR が無いため $(pwd) のまま起動します"
+fi
 while true; do
   if opencode_alive; then
     : # 稼働中 → 何もしない
