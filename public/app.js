@@ -58,18 +58,24 @@ async function loadRepos() {
 }
 document.querySelector('#refreshRepos').addEventListener('click', loadRepos);
 document.querySelector('#newProject').addEventListener('click', () => { loadRepos(); newEnvDialog.showModal(); });
+function bindOnce(element, listener) {
+  // 一覧の部分更新でも多重登録されないよう、要素単位で1度だけ束縛する
+  if (!element || element.dataset.bound) return;
+  element.dataset.bound = '1';
+  element.addEventListener('click', listener);
+}
 function bindEnvironmentActions() {
-  document.querySelectorAll('.open-button').forEach((button) => button.addEventListener('click', () => { if (button.dataset.url) window.open(button.dataset.url, '_blank', 'noopener'); else notify(`${button.dataset.env} のワークスペースを開いています`); }));
-  document.querySelectorAll('.opencode-button').forEach((button) => button.addEventListener('click', async () => { await launchOpenCode(button.dataset.env); }));
-  document.querySelectorAll('.delete-button').forEach((button) => button.addEventListener('click', () => openDeleteConfirm(button.dataset.provider, button.dataset.env, button.dataset.name)));
-  document.querySelectorAll('.split-toggle').forEach((toggle) => toggle.addEventListener('click', (event) => {
+  document.querySelectorAll('.open-button').forEach((button) => bindOnce(button, () => { if (button.dataset.url) window.open(button.dataset.url, '_blank', 'noopener'); else notify(`${button.dataset.env} のワークスペースを開いています`); }));
+  document.querySelectorAll('.opencode-button').forEach((button) => bindOnce(button, async () => { await launchOpenCode(button.dataset.env); }));
+  document.querySelectorAll('.delete-button').forEach((button) => bindOnce(button, () => openDeleteConfirm(button.dataset.provider, button.dataset.env, button.dataset.name)));
+  document.querySelectorAll('.split-toggle').forEach((toggle) => bindOnce(toggle, (event) => {
     event.stopPropagation();
     const menu = toggle.parentElement.querySelector('.split-menu');
     const willOpen = menu.hidden;
     document.querySelectorAll('.split-menu').forEach((m) => { m.hidden = true; });
     menu.hidden = !willOpen;
   }));
-  document.querySelectorAll('.stop-button,.start-button').forEach((button) => button.addEventListener('click', async () => {
+  document.querySelectorAll('.stop-button,.start-button').forEach((button) => bindOnce(button, async () => {
     document.querySelectorAll('.split-menu').forEach((m) => { m.hidden = true; });
     const action = button.classList.contains('stop-button') ? 'stop' : 'start';
     button.disabled = true;
@@ -160,7 +166,10 @@ async function pollServeStatus() {
     const data = await result.json();
     if (data.vercel) isVercel = true;
     const known = new Set((data.states || []).map((s) => s.environmentId));
-    (data.states || []).forEach((state) => renderOpenCodeBadge(document.querySelector(`.opencode-status[data-env="${state.environmentId}"]`), state));
+    (data.states || []).forEach((state) => {
+      renderOpenCodeBadge(document.querySelector(`.opencode-status[data-env="${state.environmentId}"]`), state);
+      syncCardState(state.environmentId, state.state);
+    });
     if (serveStatusPolled) {
       document.querySelectorAll('.opencode-status[data-env]').forEach((badge) => {
         if (!known.has(badge.dataset.env)) {
@@ -186,6 +195,49 @@ document.querySelector('#environmentList').addEventListener('click', (event) => 
 document.querySelectorAll('.filter').forEach((filter) => filter.addEventListener('click', () => { document.querySelectorAll('.filter').forEach((item) => item.classList.remove('active')); filter.classList.add('active'); const mode = filter.textContent.toLowerCase(); document.querySelectorAll('.environment-card').forEach((card) => { card.style.display = mode === 'all' || (mode === 'running' && card.classList.contains('running')) || (mode === 'paused' && card.classList.contains('paused')) ? '' : 'none'; }); }));
 document.querySelector('#refreshEnv').addEventListener('click', loadConnectedEnvironments);
 
+// カード表示用の状態分類。一覧APIの生stateは遷移中（Starting/Rebuilding等）や
+// 取得タイミングで古いことがあり、単純な二分法ではPaused誤表示になるため4分類する。
+// 不明な状態は起動中扱いに倒す（停止誤表示より安全）。
+function describeCardState(raw) {
+  const st = String(raw || '').toLowerCase();
+  if (/avail|run|active/.test(st)) return 'running';
+  if (/start|provisio|created|queue|prepar|boot|rebuild|await/.test(st)) return 'starting';
+  if (/stopp|shut|archiv|paused/.test(st)) return 'stopped';
+  if (/fail|delet|unknown/.test(st)) return 'failed';
+  return 'starting';
+}
+function cardPillHTML(cardState) {
+  if (cardState === 'running') return `<span class="pill live">● Running</span>`;
+  if (cardState === 'starting') return `<span class="pill starting">◐ 起動中…</span>`;
+  if (cardState === 'failed') return `<span class="pill failed">● 失敗</span>`;
+  return `<span class="pill pause">● 停止</span>`;
+}
+function launchButtonsHTML(item, cardState) {
+  const codespaceOnly = `<span class="split-group"><button class="opencode-button" data-env="${item.id}">起動</button><button class="split-toggle" aria-label="その他の起動方法">▾</button><span class="split-menu" hidden><button class="start-button" data-provider="github" data-env="${item.id}">codespaceのみ起動</button></span></span>`;
+  if (cardState === 'running') return `<button class="stop-button" data-provider="github" data-env="${item.id}">停止</button><button class="opencode-button" data-env="${item.id}">起動</button>`;
+  if (cardState === 'starting') return `<button class="start-button" data-provider="github" data-env="${item.id}" disabled>起動中…</button><button class="opencode-button" data-env="${item.id}">起動</button>`;
+  return codespaceOnly;
+}
+// ライブ状態（/api/opencode/status）に合わせてカードのピルとボタンを補正する。
+// 操作中・メニュー開閉中のカードは上書きしない。
+function syncCardState(envId, liveState) {
+  if (!['running', 'starting', 'stopped', 'failed'].includes(liveState)) return;
+  const card = document.querySelector(`article[data-env="${CSS.escape(envId)}"]`);
+  if (!card || card.dataset.cardState === liveState) return;
+  if (card.querySelector('button:disabled') || card.querySelector('.split-menu:not([hidden])')) return;
+  card.dataset.cardState = liveState;
+  card.classList.toggle('running', liveState === 'running');
+  card.classList.toggle('paused', liveState !== 'running');
+  const pill = card.querySelector('.meta .pill');
+  if (pill) pill.outerHTML = cardPillHTML(liveState);
+  const actions = card.querySelector('.card-actions');
+  if (actions) {
+    const openBtn = actions.querySelector('.open-button');
+    const delBtn = actions.querySelector('.delete-button');
+    actions.innerHTML = `${launchButtonsHTML({ id: envId }, liveState)}${openBtn ? openBtn.outerHTML : ''}${delBtn ? delBtn.outerHTML : ''}`;
+    bindEnvironmentActions();
+  }
+}
 let currentRefreshStartedAt = 0;
 async function loadConnectedEnvironments() {
   const startedAt = Date.now();
@@ -211,11 +263,9 @@ async function loadConnectedEnvironments() {
     if (!data.environments?.length) { document.querySelector('#environmentList').innerHTML = `<div class="empty-state"><strong>環境がありません</strong><span>${Object.values(config.configured).some(Boolean) ? '接続先に環境が見つかりませんでした。GitHub側でCodespaceを作成するか、トークンの権限を確認してください。' : 'トークンが未設定のため表示できません。'}</span><div class="empty-actions"><button class="primary-button" onclick="document.querySelector('#setupDialog').showModal()">設定を開く</button><button class="ghost-button" id="emptyRetry">再読み込み</button></div></div>`; document.querySelector('#emptyRetry').addEventListener('click', loadConnectedEnvironments); return; }
     const list = document.querySelector('#environmentList');
     list.innerHTML = data.environments.map((item) => {
-      const running = String(item.state).toLowerCase().includes('run') || ['available', 'active'].includes(String(item.state).toLowerCase());
-      const launchButtons = running
-        ? `<button class="stop-button" data-provider="github" data-env="${item.id}">停止</button><button class="opencode-button" data-env="${item.id}">起動</button>`
-        : `<span class="split-group"><button class="opencode-button" data-env="${item.id}">起動</button><button class="split-toggle" aria-label="その他の起動方法">▾</button><span class="split-menu" hidden><button class="start-button" data-provider="github" data-env="${item.id}">codespaceのみ起動</button></span></span>`;
-      return `<article class="environment-card ${running ? 'running' : 'paused'}"><div class="card-top"><div class="provider-icon github">◖</div><div class="env-title"><h3>${item.name}</h3><div class="meta"><span class="pill ${running ? 'live' : 'pause'}">● ${running ? 'Running' : 'Paused'}</span><span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div><div class="opencode-status" data-env="${item.id}"></div><div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${launchButtons}<button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="github" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
+      const cardState = describeCardState(item.state);
+      const running = cardState === 'running';
+      return `<article class="environment-card ${running ? 'running' : 'paused'}" data-env="${item.id}" data-card-state="${cardState}"><div class="card-top"><div class="provider-icon github">◖</div><div class="env-title"><h3>${item.name}</h3><div class="meta">${cardPillHTML(cardState)}<span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div><div class="opencode-status" data-env="${item.id}"></div><div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${launchButtonsHTML(item, cardState)}<button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="github" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
     }).join('');
 bindEnvironmentActions();
 // Splitメニューは一覧再描画で作り直されるため、閉じる処理は document に1度だけ登録する
