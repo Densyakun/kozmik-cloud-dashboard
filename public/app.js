@@ -238,6 +238,53 @@ function syncCardState(envId, liveState) {
     bindEnvironmentActions();
   }
 }
+function environmentCardHTML(item, cardState) {
+  const running = cardState === 'running';
+  return `<article class="environment-card ${running ? 'running' : 'paused'}" data-env="${item.id}" data-card-state="${cardState}"><div class="card-top"><div class="provider-icon github">◖</div><div class="env-title"><h3>${item.name}</h3><div class="meta">${cardPillHTML(cardState)}<span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div><div class="opencode-status" data-env="${item.id}"></div><div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${launchButtonsHTML(item, cardState)}<button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="github" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
+}
+function updateEnvironmentCard(card, item, cardState) {
+  // 取得済みの表示は消さず、変わった箇所だけ上書きする（ちらつき・レイアウト崩れ防止）
+  const title = card.querySelector('.env-title h3');
+  if (title && title.textContent !== item.name) title.textContent = item.name;
+  const branch = card.querySelector('.branch');
+  if (branch) branch.innerHTML = `⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}`;
+  const stamp = card.querySelector('.agent span:last-child');
+  if (stamp) stamp.textContent = item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready';
+  const openBtn = card.querySelector('.open-button');
+  if (openBtn && openBtn.dataset.url !== (item.url || '')) openBtn.dataset.url = item.url || '';
+  const delBtn = card.querySelector('.delete-button');
+  if (delBtn && delBtn.dataset.name !== item.name) delBtn.dataset.name = item.name;
+  syncCardState(item.id, cardState);
+}
+// 一覧の差分更新。取得前からある表示は消さない。取得後に内容だけ新しくする。
+function renderEnvironmentList(environments) {
+  const list = document.querySelector('#environmentList');
+  const seen = new Set();
+  environments.forEach((item) => {
+    seen.add(item.id);
+    const cardState = describeCardState(item.state);
+    let card = list.querySelector(`article[data-env="${CSS.escape(item.id)}"]`);
+    if (!card) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = environmentCardHTML(item, cardState);
+      card = tmp.firstElementChild;
+      list.appendChild(card);
+    } else {
+      updateEnvironmentCard(card, item, cardState);
+    }
+    list.appendChild(card);
+  });
+  list.querySelectorAll('article[data-env]').forEach((card) => {
+    if (!seen.has(card.dataset.env)) card.remove();
+  });
+  const empty = list.querySelector('.empty-state');
+  if (empty) empty.remove();
+  bindEnvironmentActions();
+}
+// Splitメニューを閉じる処理は document に1度だけ登録する
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.split-group')) document.querySelectorAll('.split-menu').forEach((m) => { m.hidden = true; });
+});
 let currentRefreshStartedAt = 0;
 async function loadConnectedEnvironments() {
   const startedAt = Date.now();
@@ -260,21 +307,23 @@ async function loadConnectedEnvironments() {
     const data = await result.json();
     if (data.errors?.length) notify(`${data.errors.join(' / ')} の取得に失敗しました。トークンの権限や有効期限を確認してください。`);
     document.querySelector('#environmentCount').textContent = String(data.environments?.length ?? 0);
-    if (!data.environments?.length) { document.querySelector('#environmentList').innerHTML = `<div class="empty-state"><strong>環境がありません</strong><span>${Object.values(config.configured).some(Boolean) ? '接続先に環境が見つかりませんでした。GitHub側でCodespaceを作成するか、トークンの権限を確認してください。' : 'トークンが未設定のため表示できません。'}</span><div class="empty-actions"><button class="primary-button" onclick="document.querySelector('#setupDialog').showModal()">設定を開く</button><button class="ghost-button" id="emptyRetry">再読み込み</button></div></div>`; document.querySelector('#emptyRetry').addEventListener('click', loadConnectedEnvironments); return; }
-    const list = document.querySelector('#environmentList');
-    list.innerHTML = data.environments.map((item) => {
-      const cardState = describeCardState(item.state);
-      const running = cardState === 'running';
-      return `<article class="environment-card ${running ? 'running' : 'paused'}" data-env="${item.id}" data-card-state="${cardState}"><div class="card-top"><div class="provider-icon github">◖</div><div class="env-title"><h3>${item.name}</h3><div class="meta">${cardPillHTML(cardState)}<span>${item.provider}</span></div></div></div><div class="branch">⌁ ${item.repository || '-'} <span>·</span> ${item.branch || '-'}</div><div class="opencode-status" data-env="${item.id}"></div><div class="card-bottom"><div class="agent"><span class="agent-dot">✦</span><span>${item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP') : 'Ready'}</span></div><div class="card-actions">${launchButtonsHTML(item, cardState)}<button class="open-button" data-env="${item.id}" data-url="${item.url || ''}">Open workspace <span>↗</span></button><button class="delete-button" data-provider="github" data-env="${item.id}" data-name="${item.name}">削除</button></div></div></article>`;
-    }).join('');
-bindEnvironmentActions();
-// Splitメニューは一覧再描画で作り直されるため、閉じる処理は document に1度だけ登録する
-document.addEventListener('click', (event) => {
-  if (!event.target.closest('.split-group')) document.querySelectorAll('.split-menu').forEach((m) => { m.hidden = true; });
-});
+    if (!data.environments?.length) {
+      // 環境ゼロの時だけ空表示にする。既存カードがある場合は消さずに維持する
+      if (!document.querySelector('#environmentList article[data-env]') && !document.querySelector('#environmentList .empty-state')) {
+        document.querySelector('#environmentList').innerHTML = `<div class="empty-state"><strong>環境がありません</strong><span>${Object.values(config.configured).some(Boolean) ? '接続先に環境が見つかりませんでした。GitHub側でCodespaceを作成するか、トークンの権限を確認してください。' : 'トークンが未設定のため表示できません。'}</span><div class="empty-actions"><button class="primary-button" onclick="document.querySelector('#setupDialog').showModal()">設定を開く</button><button class="ghost-button" id="emptyRetry">再読み込み</button></div></div>`;
+        document.querySelector('#emptyRetry').addEventListener('click', loadConnectedEnvironments);
+      }
+      return;
+    }
+    renderEnvironmentList(data.environments);
     pollServeStatus();
   } catch (error) {
-    document.querySelector('#environmentList').innerHTML = `<div class="empty-state"><strong>読込に失敗しました</strong><span>${error instanceof Error ? error.message : 'サーバーに接続できません'}</span><div class="empty-actions"><button class="ghost-button" onclick="loadConnectedEnvironments()">再読み込み</button></div></div>`;
+    // 取得失敗時は表示を消さず、前回の表示を維持する（初回のみエラー表示）
+    if (!document.querySelector('#environmentList article[data-env]')) {
+      document.querySelector('#environmentList').innerHTML = `<div class="empty-state"><strong>読込に失敗しました</strong><span>${error instanceof Error ? error.message : 'サーバーに接続できません'}</span><div class="empty-actions"><button class="ghost-button" onclick="loadConnectedEnvironments()">再読み込み</button></div></div>`;
+    } else {
+      notify('一覧の更新に失敗しました。前回の表示を維持します');
+    }
   } finally {
     if (currentRefreshStartedAt === startedAt) {
       setTimeout(() => { refreshButton.classList.remove('spinning'); refreshButton.disabled = false; }, 400);

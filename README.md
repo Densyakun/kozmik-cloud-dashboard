@@ -57,6 +57,22 @@ OpenCodeはCodespace内で動作するため、対象リポジトリに `.devcon
 - この Basic 認証の値は `presence-monitor.sh`（セッション監視）が opencode サーバーへの問い合わせにも使います。
 - 組織ポリシーで public ポートが無効な場合は、`portsAttributes."4096".visibility` を `"private"` に変更して GitHub ログイン経由で利用してください。
 
+### パスワードの一元管理
+
+GitHub の Codespaces シークレットは書き込み専用で読み返せないため、完全な一元化はできません。運用として **`.env.local` の `OPENCODE_SERVER_PASSWORD` を正本** とし、配布スクリプトで各所へ同期します。
+
+```powershell
+# リポジトリシークレットへ配布（Codespace 実効値）
+npm run sync-password
+# Vercel 本番環境変数にも配布し、Codespace を再起動して再注入
+npm run sync-password -- --vercel --restart
+```
+
+- 配布先：(1) リポジトリ Codespaces シークレット（Codespace 実効値）、(2) `--vercel` で Vercel 本番環境変数（本番 Dashboard 表示値。反映には `vercel --prod` が必要）
+- シークレット変更だけでは実行中の環境に反映されないため、配布後は Codespace の再起動（`--restart`）が必要です
+- 前提：PyNaCl（`pip install pynacl`）、Vercel 配布には vercel CLI とログイン
+- スクリプトは秘密値を表示・記録しません
+
 ### ヘッドレス（エディタ未接続）Codespaceの注意
 
 API/CLIで作成して一度もエディタを開いていないCodespaceでは、ポート転送エージェント（`*.app.github.dev` の配信）が有効になるまで数十秒ほどかかる場合があります。「開く ↗」して読み込み中になる場合は、少し待って再読み込みしてください。それでも表示されない場合は、一度ブラウザからCodespaceのUI（`https://github.com/codespaces`）を開いてから再度やってみてください。
