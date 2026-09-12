@@ -213,9 +213,9 @@ function cardPillHTML(cardState) {
   return `<span class="pill pause">● 停止</span>`;
 }
 function launchButtonsHTML(item, cardState) {
-  const codespaceOnly = `<span class="split-group"><button class="opencode-button" data-env="${item.id}">起動</button><button class="split-toggle" aria-label="その他の起動方法">▾</button><span class="split-menu" hidden><button class="start-button" data-provider="github" data-env="${item.id}">codespaceのみ起動</button></span></span>`;
-  if (cardState === 'running') return `<button class="stop-button" data-provider="github" data-env="${item.id}">停止</button><button class="opencode-button" data-env="${item.id}">起動</button>`;
-  if (cardState === 'starting') return `<button class="start-button" data-provider="github" data-env="${item.id}" disabled>起動中…</button><button class="opencode-button" data-env="${item.id}">起動</button>`;
+  const codespaceOnly = `<span class="split-group"><button class="opencode-button" data-env="${item.id}">OpenCode起動</button><button class="split-toggle" aria-label="その他の起動方法">▾</button><span class="split-menu" hidden><button class="start-button" data-provider="github" data-env="${item.id}">codespaceのみ起動</button></span></span>`;
+  if (cardState === 'running') return `<button class="stop-button" data-provider="github" data-env="${item.id}">停止</button><button class="opencode-button" data-env="${item.id}">OpenCode起動</button>`;
+  if (cardState === 'starting') return `<button class="start-button" data-provider="github" data-env="${item.id}" disabled>起動中…</button><button class="opencode-button" data-env="${item.id}">OpenCode起動</button>`;
   return codespaceOnly;
 }
 // ライブ状態（/api/opencode/status）に合わせてカードのピルとボタンを補正する。
