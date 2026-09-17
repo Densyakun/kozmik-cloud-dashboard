@@ -308,10 +308,14 @@ async function loadConnectedEnvironments() {
     if (data.errors?.length) notify(`${data.errors.join(' / ')} の取得に失敗しました。トークンの権限や有効期限を確認してください。`);
     document.querySelector('#environmentCount').textContent = String(data.environments?.length ?? 0);
     if (!data.environments?.length) {
-      // 環境ゼロの時だけ空表示にする。既存カードがある場合は消さずに維持する
-      if (!document.querySelector('#environmentList article[data-env]') && !document.querySelector('#environmentList .empty-state')) {
-        document.querySelector('#environmentList').innerHTML = `<div class="empty-state"><strong>環境がありません</strong><span>${Object.values(config.configured).some(Boolean) ? '接続先に環境が見つかりませんでした。GitHub側でCodespaceを作成するか、トークンの権限を確認してください。' : 'トークンが未設定のため表示できません。'}</span><div class="empty-actions"><button class="primary-button" onclick="document.querySelector('#setupDialog').showModal()">設定を開く</button><button class="ghost-button" id="emptyRetry">再読み込み</button></div></div>`;
-        document.querySelector('#emptyRetry').addEventListener('click', loadConnectedEnvironments);
+      // 環境ゼロの時だけ空表示にする（初回の「読み込んでいます」プレースホルダも置き換える）。
+      // 既存カードがある場合は消さずに維持する
+      const list = document.querySelector('#environmentList');
+      if (!list.querySelector('article[data-env]')) {
+        list.innerHTML = `<div class="empty-state"><strong>環境がありません</strong><span>${Object.values(config.configured).some(Boolean) ? '接続先に環境が見つかりませんでした。GitHub側でCodespaceを作成するか、トークンの権限を確認してください。' : 'トークンが未設定のため表示できません。'}</span><div class="empty-actions"><button class="primary-button" onclick="document.querySelector('#setupDialog').showModal()">設定を開く</button><button class="ghost-button" id="emptyRetry">再読み込み</button></div></div>`;
+        list.querySelector('#emptyRetry').addEventListener('click', loadConnectedEnvironments);
+      } else {
+        list.querySelector('.empty-state')?.remove();
       }
       return;
     }
