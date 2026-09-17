@@ -79,6 +79,7 @@ function bindEnvironmentActions() {
     document.querySelectorAll('.split-menu').forEach((m) => { m.hidden = true; });
     const action = button.classList.contains('stop-button') ? 'stop' : 'start';
     button.disabled = true;
+    button.dataset.pending = '1';
     const prev = button.textContent;
     button.textContent = action === 'stop' ? '停止中…' : '起動中…';
     try {
@@ -87,7 +88,7 @@ function bindEnvironmentActions() {
       if (result.ok) { notify(action === 'stop' ? '停止しました' : '起動しました'); setTimeout(loadConnectedEnvironments, 2000); }
       else notify(data.message || `${action}に失敗しました`);
     } catch { notify('サーバーに接続できません'); }
-    finally { button.disabled = false; button.textContent = prev; }
+    finally { delete button.dataset.pending; button.disabled = false; button.textContent = prev; }
   }));
 }
 bindEnvironmentActions();
@@ -219,12 +220,16 @@ function launchButtonsHTML(item, cardState) {
   return codespaceOnly;
 }
 // ライブ状態（/api/opencode/status）に合わせてカードのピルとボタンを補正する。
-// 操作中・メニュー開閉中のカードは上書きしない。
+// 操作中・メニュー開閉中のカードは上書きしない。注: 状態がstartingのとき描画される
+// 「起動中…（disabled）」ボタンは operation pending ではない。data-pending が付いた
+// ボタン（クリック直後の停止中…/起動中…）だけを上書き禁止とする。
+// disabled を見ると永続的な「起動中…」ボタンがある限りカードが
+// Runningへ昇格できなくなり、停止操作が永遠に出てこない不具合の原因になる。
 function syncCardState(envId, liveState) {
   if (!['running', 'starting', 'stopped', 'failed'].includes(liveState)) return;
   const card = document.querySelector(`article[data-env="${CSS.escape(envId)}"]`);
   if (!card || card.dataset.cardState === liveState) return;
-  if (card.querySelector('button:disabled') || card.querySelector('.split-menu:not([hidden])')) return;
+  if (card.querySelector('button[data-pending]') || card.querySelector('.split-menu:not([hidden])')) return;
   card.dataset.cardState = liveState;
   card.classList.toggle('running', liveState === 'running');
   card.classList.toggle('paused', liveState !== 'running');
