@@ -137,7 +137,9 @@ async function codespaceStatusEntry(environmentId) {
         const repaired = await ensurePublicForwardVisibility(environmentId);
         if (repaired) health = await probeOpenCodeHealth(publicUrl, { env });
       }
-      const opencode = health.healthy ? 'running' : health.httpCode === 0 ? 'starting' : 'error';
+      // 200(serverUp) はヘルスJSONの形式差異があっても「稼働中」と扱う。
+      // 401 は認証不一致で opencode 自体は生きているためエラー表示にする。
+      const opencode = health.healthy || health.serverUp && !health.authMismatch ? 'running' : health.httpCode === 0 ? 'starting' : 'error';
       return {
         ...base,
         state: 'running',

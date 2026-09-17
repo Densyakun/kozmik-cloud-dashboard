@@ -38,9 +38,17 @@ export async function probeOpenCodeHealth(publicUrl, { env = process.env, timeou
     // リダイレクトする。最終URLがオリジンの公開URLと異なれば「トンネル層の応答」として区別する。
     const finalUrl = String(res.url || '');
     const tunnelRedirect = !finalUrl.startsWith(baseUrl);
-    if (!res.ok || tunnelRedirect) return { healthy: false, httpCode: res.status, tunnelRedirect };
+    if (!res.ok || tunnelRedirect) {
+      return { healthy: false, httpCode: res.status, tunnelRedirect,
+        // 401 は「サーバーは稼働しているが Basic 認証が拒否された」を意味する
+        authMismatch: res.status === 401,
+        serverUp: res.status === 401 };
+    }
     const body = await res.json();
-    return { healthy: Boolean(body && body.healthy), version: body && body.version, httpCode: res.status };
+    // 200 でも body.healthy が無い形式（バージョン差異）がある。HTTPで応答している
+    // 以上サーバー自体は稼働しているため serverUp で区別する（稼働未準備と誤表示しない）。
+    return { healthy: Boolean(body && body.healthy), version: body && body.version,
+      httpCode: res.status, serverUp: true, healthyUnknown: !body || !('healthy' in body) };
   } catch {
     return { healthy: false, httpCode: 0 };
   } finally {
@@ -52,6 +60,9 @@ export async function probeOpenCodeHealth(publicUrl, { env = process.env, timeou
 // トンネル層の応答（404/5xx/pf-signinへのリダイレクト）は opencode ではなく
 // Codespaces のポート転送の公開設定が外れている可能性が高いため、対処コマンドを案内する。
 export function opencodeErrorDetail(httpCode, { environmentId, port = OPENCODE_PORT } = {}) {
+  if (httpCode === 401) {
+    return `opencodeは稼働していますがBasic認証に失敗しました（HTTP 401）。Codespace側のパスワードとダッシュボード側の OPENCODE_SERVER_PASSWORD が一致していません。npm run sync-password -- --vercel --restart で同期するか、Codespaces シークレット OPENCODE_SERVER_PASSWORD を設定してCodespaceを再起動してください。`;
+  }
   if (httpCode === 404 || httpCode === 403 || httpCode === 502 || (httpCode && httpCode >= 500)) {
     return `opencodeが未応答です（HTTP ${httpCode}）。Codespacesのポート転送（トンネル）が公開設定から外れている可能性があります。数分待って再読み込みするか、ターミナルで「gh codespace ports visibility ${port}:public -c ${environmentId}」を実行してから再読み込みしてください。`;
   }

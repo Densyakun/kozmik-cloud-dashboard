@@ -14,7 +14,9 @@ export default async function handler(req, res) {
       if (kind === 'running') {
         // CodespaceはRunningでも opencode の起動が追いついていないことがあるため、公開URLへヘルスチェックする
         const health = await probeOpenCodeHealth(publicUrl);
-        const opencode = health.healthy ? 'running' : health.httpCode === 0 ? 'starting' : 'error';
+        // 200(serverUp) はヘルスJSONの形式差異があっても「稼働中」と扱う。
+        // 401 は認証不一致で opencode 自体は生きているためエラー表示にする。
+        const opencode = health.healthy || health.serverUp && !health.authMismatch ? 'running' : health.httpCode === 0 ? 'starting' : 'error';
         return {
           ...base,
           state: 'running',

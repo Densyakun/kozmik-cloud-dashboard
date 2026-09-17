@@ -69,31 +69,57 @@ launch_bg() {
 
 # ---- 1) 設定の反映 ---------------------------------------------------------
 sync_config() {
+  if [ -z "$GITLAB_TOKEN" ]; then
+    log "警告: GITLAB_TOKEN 未設定のため private の config-opencode を取得できません。Codespaces シークレット GITLAB_TOKEN（または PRESENCE_GITLAB_TOKEN）を設定後、Codespace を再起動してください"
+  fi
   mkdir -p "$CONFIG_DIR"
   local auth_url="$CONFIG_REPO"
   if [ -n "$GITLAB_TOKEN" ]; then
     # private リポジトリは oauth2:<token>@ 埋め込みで認証
     auth_url="$(printf '%s' "$CONFIG_REPO" | sed -E 's#(https?://)[^@]*@#\1#; s#^https?://#&oauth2:'"$GITLAB_TOKEN"'@#')"
   fi
+  # 残骸（前回中途半端に失敗したclone）は必ず捨ててからやり直す
+  if [ -d "$TMP_CLONE" ] && [ ! -d "$TMP_CLONE/.git" ]; then rm -rf "$TMP_CLONE"; fi
   if [ -d "$TMP_CLONE/.git" ]; then
     run_t 30 git -C "$TMP_CLONE" remote set-url origin "$auth_url" 2>/dev/null || true
-    run_t 30 git -C "$TMP_CLONE" fetch --depth 1 origin main 2>/dev/null || true
-    run_t 30 git -C "$TMP_CLONE" reset --hard origin/main 2>/dev/null || true
-  else
-    rm -rf "$TMP_CLONE"
-    run_t 30 git clone --depth 1 "$auth_url" "$TMP_CLONE" 2>/dev/null || { log "設定のcloneに失敗（スキップ）"; return 0; }
+    if ! run_t 30 git -C "$TMP_CLONE" fetch --depth 1 origin main 2>/dev/null; then
+      log "警告: 設定リポジトリのfetchに失敗。cloneし直します"
+      rm -rf "$TMP_CLONE"
+    else
+      run_t 30 git -C "$TMP_CLONE" reset --hard origin/main 2>/dev/null || rm -rf "$TMP_CLONE"
+    fi
   fi
-  [ -d "$TMP_CLONE/.git" ] || { log "設定リポジトリが取得できません（スキップ）"; return 0; }
+  if [ ! -d "$TMP_CLONE/.git" ]; then
+    rm -rf "$TMP_CLONE"
+    if ! run_t 60 git clone --depth 1 "$auth_url" "$TMP_CLONE"; then
+      log "警告: 設定のcloneに失敗（スキップ）。GITLAB_TOKEN の有効期限・権限と network を確認してください"
+      return 0
+    fi
+  fi
+  [ -d "$TMP_CLONE/.git" ] || { log "警告: 設定リポジトリが取得できません（スキップ）"; return 0; }
 
   local count=0
+  local auth_src=""
   while IFS= read -r -d '' f; do
     local src="$TMP_CLONE/$f" dst="$CONFIG_DIR/$f"
     if [ -f "$src" ]; then
       mkdir -p "$(dirname "$dst")"
       cp -f "$src" "$dst"
       count=$((count + 1))
+      # auth.json は opencode の API キー置き場が ~/.local/share/opencode/auth.json なので
+      # ~/.config/opencode へのコピーに加えて実参照先にも反映する
+      case "$f" in
+        auth.json) auth_src="$src" ;;
+      esac
     fi
   done < <(git -C "$TMP_CLONE" ls-files -z 2>/dev/null)
+  if [ -n "$auth_src" ]; then
+    mkdir -p "$HOME/.local/share/opencode"
+    cp -f "$auth_src" "$HOME/.local/share/opencode/auth.json"
+    log "~/.local/share/opencode/auth.json へも反映しました"
+  else
+    log "警告: 設定リポジトリに auth.json が見つかりません。APIキー（Portkey等）は同期されません"
+  fi
   rm -rf "$TMP_CLONE"
   log "設定を反映しました（${count}ファイル）"
 }
