@@ -11,6 +11,7 @@
 #   - ca-certificates : TLS（gitlab.com / github.com / opencode.ai）
 #   - util-linux : setsid（postStartCommand からデーモンを分離起動するために必須）
 #   - openssl    : public ポートを守る Basic 認証パスワードの生成
+#   - nodejs/npm : 本アプリ server.js の実行（規定で Node 20 LTS を導入）
 FROM debian:12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -29,6 +30,12 @@ RUN apt-get update \
         grep \
         util-linux \
         openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js を規定で導入する（server.js 実行用 / README 要件: Node.js 18以上）。
+# Debian 12 標準の nodejs は 18 系のため、Node 20 LTS を NodeSource から入れる。
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # opencode をビルド時にプリインストールする（起動時にダウンロード待ちをさせない）。
