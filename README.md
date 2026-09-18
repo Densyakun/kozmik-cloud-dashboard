@@ -34,11 +34,11 @@ npm start
 
 ## OpenCodeを利用するための準備（Codespace側・初回のみ）
 
-OpenCodeはCodespace内で動作するため、対象リポジトリに `.devcontainer` が必要です。本リポジトリの `.devcontainer/` を参考（またはそのままコピー）にしてください。
+OpenCodeはCodespace内で動作するため、対象リポジトリに `.devcontainer` が必要です。本リポジトリは環境定義を持たず、**環境定義リポジトリ `Densyakun/opencode-workspace` の `.devcontainer/` が唯一の正本**です。ダッシュボードは既定で同リポジトリからCodespaceを作成します。別のリポジトリでOpenCodeを使う場合のみ、そのリポジトリへ `opencode-workspace` の `.devcontainer/` をコピーしてください。
 
 `.devcontainer/devcontainer.json` に含まれる内容:
 
-- `"build.dockerfile": ".devcontainer/Dockerfile"` — **軽量な自前イメージ**（`debian:12-slim` ＋ curl/git/tar/sed/grep/util-linux ＋ opencode をビルド時にプリインストール）。旧 `universal:2`（数GB）に比べて**初回起動が大幅に高速**です。
+- `"build.dockerfile": ".devcontainer/Dockerfile"` — **軽量な自前イメージ**（`debian:12-slim` ＋ curl/git/tar/sed/grep/util-linux ＋ Node.js 20 LTS（NodeSource）＋ opencode をビルド時にプリインストール）。旧 `universal:2`（数GB）に比べて**初回起動が大幅に高速**です。
 - `"forwardPorts": [4096]` — opencodeが使うポートを転送
 - `"portsAttributes"` — ポート4096の転送設定。`visibility` は **public**（`https://<codespace>-4096.app.github.dev` をログインなしで開ける）かつ opencode を **Basic 認証（`opencode` / パスワード）** で保護しています。
 - `"hostRequirements"` — 高速なマシン指定（cpus4/memory8gb/storage16gb）
@@ -46,7 +46,7 @@ OpenCodeはCodespace内で動作するため、対象リポジトリに `.devcon
 
 **手順:**
 
-1. 対象リポジトリに `.devcontainer/`（`devcontainer.json`・`Dockerfile`・各 `.sh`）を追加してコミット
+1. 既定では `Densyakun/opencode-workspace` の `.devcontainer/` が使われるため追加作業は不要。別リポジトリで使う場合のみ、そのリポジトリに `.devcontainer/`（`devcontainer.json`・`Dockerfile`・各 `.sh`）を追加してコミット
 2. Codespacesでリポジトリを開いて **「Rebuild Container（コンテナーの再ビルド）」** を実行する（追加済みのCodespaceには再ビルド前に反映されません）
 3. `postStartCommand` により opencode がポート4096で起動し、`https://<codespace>-4096.app.github.dev` でアクセスできます（Basic認証ダイアログでユーザー名 `opencode` とパスワードを入力）
 
@@ -99,7 +99,7 @@ API/CLIで作成して一度もエディタを開いていないCodespaceでは�
 - Codespace 側: 監視スイッチの読み取りは Codespaces 自動注入の `GITHUB_TOKEN` で行うため、監視専用の追加シークレットは不要です。config 同期（private リポジトリの clone）には従来どおり `GITLAB_TOKEN`（または `PRESENCE_GITLAB_TOKEN` からのフォールバック）を使います。
   - シークレットは新しい Codespace 作成時または再起動時に反映されます。
 - （任意）Codespaces シークレット **`OPENCODE_SERVER_PASSWORD`** で opencode Web の Basic 認証パスワードを固定できます。未設定時は初回起動にランダム生成され `~/.config/opencode/.webpass` に保持されます。
-- 対象リポジトリの `.devcontainer/` に `start-opencode.sh`・`presence-monitor.sh` を含める（本リポジトリを参考にコピー）。`devcontainer.json` の `postStartCommand` がこれらを実行します。
+- Codespace 側の `.devcontainer/` に `start-opencode.sh`・`presence-monitor.sh` を含める（既定は `Densyakun/opencode-workspace`）。`devcontainer.json` の `postStartCommand` がこれらを実行します。
 - `config-opencode` は **private リポジトリ**のため、Codespace 内からの `git clone` には認証トークンが必要です。`GITLAB_TOKEN`（未設定時は `PRESENCE_GITLAB_TOKEN` からのフォールバック）を config 同期に使います。監視スイッチの読み取りには使いません。
 - GitHub Codespaces の **Default idle timeout は上限の240分（4時間）に設定**してください。エージェント稼働中はターミナル出力により idle がリセットされるため停止せず、完了後は最長4時間で Codespace 側タイムアウトがバックアップとして働きます。
 
